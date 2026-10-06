@@ -39,8 +39,9 @@ export const CATEGORIES = [
     /tariff/i, /duty/i, /\bgst\b/i, /budget/i, /approval/i, /licen[cs]e/i, /govt|government/i,
   ]],
   ["management", "Management change / governance", [
-    /\bceo\b/i, /\bcfo\b/i, /\bmd\b/i, /chairman/i, /resign/i, /appoint/i, /steps down/i,
-    /auditor/i, /fraud/i, /governance/i, /whistle/i,
+    /\bceo\b/i, /\bcfo\b/i, /\bmd\b/i, /chairman/i, /resign/i, /appoint/i, /steps? down/i,
+    /auditor/i, /fraud/i, /governance/i, /whistle/i, /\bexit\b/i, /ouster|ousted|sack/i, /(term|tenure) (cut|curtail|trim)|curtails? .*term|trims? .*term/i,
+    /hindenburg|short.?seller|accounting/i,
   ]],
   ["ai_theme", "AI / data-centre theme", [
     /\bai\b/i, /artificial intelligence/i, /gen ?ai/i, /data ?cent(er|re)/i, /hyperscaler/i, /nvidia/i, /ai (capex|bubble|slowdown|spending|demand|trade)/i,
@@ -144,7 +145,10 @@ export function rankNews(raw, { start, sector = "", industry = "", name = "", ti
   const company = items.filter((it) => it.scope === "company");
   const counts = {};
   for (const it of company) counts[it.primary] = (counts[it.primary] || 0) + 1;
-  const likely = Object.entries(counts).sort((a, b) => b[1] - a[1]).find(([k]) => k !== "other")?.[0] ?? null;
+  // Market wraps that merely mention the company ("Sensex falls; X worst performer") are "macro":
+  // let specific company triggers win whenever there are any.
+  const ranked = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  const likely = (ranked.find(([k]) => k !== "other" && k !== "macro") || ranked.find(([k]) => k !== "other"))?.[0] ?? null;
   const context = items.filter((it) => it.scope !== "company").slice(0, 12);
   const buckets = {};
   for (const it of [...company, ...context]) for (const b of it.buckets) buckets[b] = (buckets[b] || 0) + 1;
