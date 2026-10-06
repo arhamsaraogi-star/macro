@@ -148,7 +148,7 @@ export async function news({ symbol, name, start, end, sector, industry, extra =
   return market.news({ symbol, name, start, end, sector, industry, extra });
 }
 
-export const { getCustomProxy, setCustomProxy, relayUrl, RelayOutdatedError } = market;
+export const { getCustomProxy, setCustomProxy, relayUrl, RelayOutdatedError, getNewsRelay, setNewsRelay, newsRelayUrl } = market;
 
 const pctTxt = (x) => `${x > 0 ? "+" : ""}${(x * 100).toFixed(0)}%`;
 

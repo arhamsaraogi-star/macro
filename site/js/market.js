@@ -23,6 +23,21 @@ export function relayUrl() {
   return getCustomProxy() || globalThis.MACRO_CONFIG?.relay || "";
 }
 
+// Optional Google News relay (relay/google-news.gs on Google Apps Script): Google doesn't block
+// its own servers, so this is the reliable route to Google News, including older years.
+const NEWS_KEY = "macro.newsRelay";
+export function getNewsRelay() {
+  try { return localStorage.getItem(NEWS_KEY) || ""; } catch { return ""; }
+}
+export function setNewsRelay(url) {
+  try { url ? localStorage.setItem(NEWS_KEY, url.trim()) : localStorage.removeItem(NEWS_KEY); } catch { /* storage blocked */ }
+}
+try {
+  const fromLink = new URLSearchParams(globalThis.location?.search || "").get("news");
+  if (fromLink && /^https:\/\/script\.google(usercontent)?\.com\//.test(fromLink)) setNewsRelay(fromLink);
+} catch { /* not in a browser */ }
+export const newsRelayUrl = () => getNewsRelay() || globalThis.MACRO_CONFIG?.news || "";
+
 export class RelayError extends Error {}
 export class RelayOutdatedError extends Error {}
 
@@ -432,6 +447,53 @@ async function fromSources(googleQuery, gdeltQuery, from, to, errors) {
   return [...gdelt, ...g];
 }
 
+/* ---------- Google News via Apps Script ---------- */
+
+async function appsScriptNews(query, from, to) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 25000);
+  try {
+    const res = await fetch(`${newsRelayUrl()}?q=${encodeURIComponent(query)}&from=${from}&to=${to}`, { signal: ctl.signal });
+    const body = JSON.parse(await res.text());
+    if (body.error) throw new Error(body.error);
+    return (body.items || []).map((it) => ({ ...it, via: "google" }));
+  } catch (e) {
+    throw new Error(`Google News relay: ${e.name === "AbortError" ? "timeout" : e.message}`);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/* ---------- NSE company filings ---------- */
+
+// Routine filings that never move a stock.
+const FILING_NOISE = /trading window|newspaper|publication|investor meet|con\. ?call|analyst|loss of share|duplicate share|share certificate|certificate under|compliance certificate|reg(ulation)? 74|74\(5\)|esop|esos|allotment of (equity )?shares under|record date|book closure|copy of|intimation of (agm|e-?voting)|scrutini[sz]er|voting results|change in rta|registrar/i;
+
+/** NSE announcements for a symbol between two dates (needs relay v3). */
+export async function filings(symbol, from, to) {
+  if (!/\.NS$/i.test(symbol) && !/^[A-Z][A-Z0-9&-]+\.BO$/i.test(symbol)) return [];
+  const base = symbol.toUpperCase().replace(/(-SM|-ST)?\.(NS|BO)$/, "");
+  const index = /-(SM|ST)\.NS$/i.test(symbol) ? "sme" : "equities";
+  const dmy = (d) => d.split("-").reverse().join("-");
+  return cached(`f:${index}:${base}:${from}:${to}`, async () => {
+    if ((await relayVersion()) < 3) throw new RelayOutdatedError("Exchange filings need the updated relay code (re-paste relay/worker.js).");
+    const url = `https://www.nseindia.com/api/corporate-announcements?index=${index}&symbol=${encodeURIComponent(base)}&from_date=${dmy(from)}&to_date=${dmy(to)}`;
+    const body = await relayFetch(url);
+    const rows = Array.isArray(body) ? body : body?.data || [];
+    return rows
+      .map((r) => {
+        const text = (r.attchmntText || "").replace(/\s+/g, " ").replace(/^.*? has informed the Exchange (about|regarding|that)\s*/i, "").trim();
+        return {
+          title: `${r.desc || "Announcement"}${text ? `: ${text.slice(0, 220)}` : ""}`,
+          desc: r.desc || "", url: r.attchmntFile && !/\/-$/.test(r.attchmntFile) ? r.attchmntFile : "",
+          source: "NSE filing", via: "nse", scope: "filing",
+          date: (r.sort_date || "").slice(0, 10) || null,
+        };
+      })
+      .filter((f) => !FILING_NOISE.test(`${f.desc} ${f.title}`));
+  });
+}
+
 /**
  * Headlines around a move with ONE archive request: the company name plus market / sector /
  * commodity terms. Headlines naming the company are "company"; the rest are split into
@@ -454,6 +516,23 @@ export function news({ symbol, name, start, end, sector = "", industry = "", ext
   const key = `n:${symbol}:${near.from}:${near.to}:${extra.map((x) => x.query).join("|")}`;
   return cached(key, async () => {
     const errors = [];
+    // 1. The company's own exchange filings (a week before to a day after the move).
+    const filingsTask = filings(symbol, shift(start, -7), shift(end, 1)).catch((e) => { errors.push(e.message); return []; });
+    // 2. Google News through the Apps Script relay, when configured: reliable and goes back years.
+    if (newsRelayUrl()) {
+      const searches = [{ query: phrase, scope: "company" }, ...extra.slice(0, 3)];
+      const got = await Promise.all(searches.map(({ query, scope }) => appsScriptNews(query, near.from, near.to)
+        .then((items) => items.slice(0, scope === "company" ? 40 : 8).map((it) => ({ ...it, scope })))
+        .catch((e) => { errors.push(e.message); return null; })));
+      if (got.some(Boolean)) {
+        const raw = [...(await filingsTask), ...got.flat().filter(Boolean)];
+        return {
+          window: near, link: googleNewsLink(phrase, near.from, near.to), errors, via: "google",
+          ...rankNews(raw, { start, sector, industry, name: clean || symbol, ticker: base }),
+        };
+      }
+    }
+    // 3. Otherwise GDELT (2017+), with Google via the Cloudflare relay as a long shot.
     // GDELT ignores very short words (ITC, LT, BEL…): search "ITC shares" / "ITC stock" instead.
     const short = (clean || base).replace(/[^a-z0-9]/gi, "").length < 5;
     const names = short ? [`"${clean || base} shares"`, `"${clean || base} stock"`, `"${clean || base} share price"`, `"${clean || base} ltd"`] : [phrase];
@@ -464,10 +543,10 @@ export function news({ symbol, name, start, end, sector = "", industry = "", ext
       const scope = mentionsCompany(it.title, clean || base, base) ? "company" : MARKET_WORDS.test(it.title) ? "market" : "sector";
       return { ...it, scope };
     });
-    const ranked = rankNews(raw, { start, sector, industry, name: clean || symbol, ticker: base });
+    const ranked = rankNews([...(await filingsTask), ...raw], { start, sector, industry, name: clean || symbol, ticker: base });
     return {
-      window: near, link: googleNewsLink(phrase, near.from, near.to), errors,
-      archiveNote: near.to < GDELT_START ? "The free news archive (GDELT) starts in 2017 and Google News blocks the relay, so older moves may show no headlines here — use the Google News link." : "",
+      window: near, link: googleNewsLink(phrase, near.from, near.to), errors, via: "gdelt",
+      archiveNote: near.to < GDELT_START ? "Headlines before 2017 need the Google News relay (Settings); until then use the Google News link." : "",
       ...ranked,
     };
   });

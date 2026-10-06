@@ -533,7 +533,9 @@ import * as engine from "./engine.js";
     levels.push([`Industry · ${esc(ind)}`, indL]);
     // Company
     const coL = [];
-    const co = ctxNews("company");
+    const co = [...ctxNews("filing"), ...ctxNews("company")];
+    const fil = ctxNews("filing")[0];
+    if (fil) coL.push(`Exchange filing ${fil.date ? fmtDate(fil.date) : ""}: <b>${esc(fil.title.slice(0, 140))}</b>`);
     if (n?.likelyTrigger) coL.push(`Most headlines: <b>${esc(label(n.likelyTrigger))}</b>`);
     for (const [b, c] of bucketsOf(co)) {
       const tone = co.filter((it) => it.buckets.includes(b)).reduce((a, it) => a + it.tone, 0);
@@ -562,13 +564,21 @@ import * as engine from "./engine.js";
       </tbody></table>`;
   }
 
+  /** One-line nudges when a better source is available but not set up. */
+  function hints(n) {
+    const out = [];
+    if ((n.errors || []).some((e) => /updated relay/.test(e))) out.push(`Exchange filings need the updated relay code — <a href="#" class="open-settings">see Settings</a>.`);
+    if (!engine.newsRelayUrl() && n.via === "gdelt") out.push(`Headlines come from the free GDELT archive (2017+, rate-limited). For reliable Google News headlines, <a href="#" class="open-settings">add the Google News relay</a>.`);
+    return out.map((t) => `<p class="muted" style="font-size:12.5px">${t}</p>`).join("");
+  }
+
   function newsHtml(n, pending) {
     const link = n.link ? `<a class="btn ghost news-link" href="${esc(n.link)}" target="_blank" rel="noopener">Google News for ${fmtDate(n.window.from)} – ${fmtDate(n.window.to)} ↗</a>` : "";
     const note = n.archiveNote ? `<p class="muted" style="font-size:12.5px">${esc(n.archiveNote)}</p>` : "";
     const more = pending ? `<p class="muted" style="font-size:12.5px"><span class="spinner"></span>Adding market &amp; sector headlines… (the free news archive allows one request every 5 seconds)</p>` : "";
-    if (!n.items.length) return `<p class="muted">No headlines found automatically for ${fmtDate(n.window.from)} – ${fmtDate(n.window.to)}.</p>${note}${more}${link}`;
+    if (!n.items.length) return `<p class="muted">No filings or headlines found automatically for ${fmtDate(n.window.from)} – ${fmtDate(n.window.to)}.</p>${hints(n)}${note}${more}${link}`;
     const counts = Object.entries(n.categoryCounts).sort((a, b) => b[1] - a[1]);
-    const item = (it) => `<a class="news-item" href="${esc(it.url)}" target="_blank" rel="noopener">
+    const item = (it) => `<a class="news-item${it.scope === "filing" ? " filing" : ""}" ${it.url ? `href="${esc(it.url)}" target="_blank" rel="noopener"` : ""}>
         <div class="t">${esc(it.title)}</div>
         <div class="m">${it.tone > 0 ? '<span class="pos">▲</span>' : it.tone < 0 ? '<span class="neg">▼</span>' : ""} ${it.date ? fmtDate(it.date) : ""} ${it.source ? "· " + esc(it.source) : ""} ${(it.buckets || []).slice(0, 3).map((b) => `<span class="chip cat">${esc(state.data.buckets[b]?.label || b)}</span>`).join("")}</div>
       </a>`;
@@ -577,7 +587,7 @@ import * as engine from "./engine.js";
       return items.length ? `<div class="news-group">${title}</div>${items.map(item).join("")}` : "";
     };
     return `<div class="row" style="margin-bottom:10px">${counts.map(([k, c]) => `<span class="chip cat">${esc(label(k))} · ${c}</span>`).join("")}</div>` +
-      group("company", "Company") + group("sector", "Sector &amp; commodities") + group("market", "Market &amp; macro") + more + note + link;
+      group("filing", "Exchange filings (NSE)") + group("company", "Company news") + group("sector", "Sector &amp; commodities") + group("market", "Market &amp; macro") + more + hints(n) + note + link;
   }
 
   async function openEvent(e) {
@@ -722,6 +732,7 @@ import * as engine from "./engine.js";
   function openSettings(e) {
     e?.preventDefault();
     $("#proxyUrl").value = engine.getCustomProxy();
+    $("#newsRelayUrl").value = engine.getNewsRelay() || (globalThis.MACRO_CONFIG?.news || "");
     $("#proxyMsg").textContent = "";
     dlg.showModal();
   }
@@ -731,7 +742,10 @@ import * as engine from "./engine.js";
     e.preventDefault();
     const v = $("#proxyUrl").value.trim();
     if (v && !/^https:\/\/.+/.test(v)) { $("#proxyMsg").textContent = "Relay URL must start with https://"; return; }
+    const nv = $("#newsRelayUrl").value.trim();
+    if (nv && !/^https:\/\/script\.google(usercontent)?\.com\//.test(nv)) { $("#proxyMsg").textContent = "The Google News relay URL starts with https://script.google.com/"; return; }
     engine.setCustomProxy(v);
+    engine.setNewsRelay(nv);
     dlg.close();
     status(v ? "Using your relay. Search again to load data." : "Relay removed.");
     if (!v && !engine.relayUrl()) showRelaySetup(false); else $("#relaySetup").hidden = true;

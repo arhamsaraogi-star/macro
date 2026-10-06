@@ -1,18 +1,19 @@
-// macro relay v2 — a tiny Cloudflare Worker that lets the browser app read Yahoo Finance,
-// Google News and NSE's price-history API (none allow cross-site browser requests).
+// macro relay v3 — a tiny Cloudflare Worker that lets the browser app read Yahoo Finance,
+// Google News, NSE's price-history API and NSE company filings (none allow cross-site
+// browser requests).
 // Free tier: 100k requests/day.
 //
 // Deploy: dash.cloudflare.com -> Workers & Pages -> Create -> Create Worker -> Deploy ->
 // Edit code -> paste this file -> Deploy. Then paste the worker URL into the site.
 
-const VERSION = 2;
+const VERSION = 3;
 
 // host -> allowed path prefixes
 const ALLOWED = {
   "query1.finance.yahoo.com": ["/"],
   "query2.finance.yahoo.com": ["/"],
   "news.google.com": ["/rss/"],
-  "www.nseindia.com": ["/api/historicalOR/", "/api/historical/"],
+  "www.nseindia.com": ["/api/historicalOR/", "/api/historical/", "/api/corporate-announcements", "/api/corporate-board-meetings"],
 };
 
 const CORS = {
@@ -28,7 +29,9 @@ function headersFor(url) {
   const h = { "User-Agent": UA, Accept: "*/*", "Accept-Language": "en-US,en;q=0.9" };
   if (url.hostname === "www.nseindia.com") {
     h.Accept = "application/json, text/plain, */*";
-    h.Referer = "https://www.nseindia.com/report-detail/eq_security";
+    h.Referer = url.pathname.startsWith("/api/corporate")
+      ? "https://www.nseindia.com/companies-listing/corporate-filings-announcements"
+      : "https://www.nseindia.com/report-detail/eq_security";
   }
   return h;
 }

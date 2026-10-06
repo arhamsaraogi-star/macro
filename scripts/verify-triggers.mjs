@@ -39,6 +39,7 @@ for (const c of CASES.filter((x) => !only || only.includes(x.symbol))) {
     const t0 = Date.now();
     const n = await engine.news({ symbol: data.symbol, name: data.info.name, start: ev.start, end: ev.end, sector: data.info.sector, industry: data.info.industry, extra: engine.contextQueries(ev, data) });
     console.log(`news in ${((Date.now() - t0) / 1000).toFixed(1)}s, errors: ${n.errors.join(" / ") || "none"}`);
+    console.log(`filings: ${n.items.filter((it) => it.scope === "filing").length}, headlines via ${n.via}`);
     for (const it of n.items.slice(0, 10)) console.log(`  [${it.scope}/${it.via}] ${it.date} ${it.primary} {${(it.buckets || []).join(",")}} ${it.tone > 0 ? "▲" : it.tone < 0 ? "▼" : "·"} ${it.title}`);
     const t = engine.triggerText(ev, n, data);
     console.log(`>>> APP SAYS: ${t?.text ?? "—"}   (likelyTrigger=${n.likelyTrigger})`);
