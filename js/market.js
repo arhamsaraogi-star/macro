@@ -375,10 +375,10 @@ function googleFailed() {
   googleRetryAt = Date.now() + 10 * 60e3;
 }
 
-async function googleNews(query, from, to) {
+async function googleNews(query, from, to, timeout = 9000) {
   const q = `${query} after:${from} before:${to}`;
   const url = `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=en-IN&gl=IN&ceid=IN:en`;
-  const xml = await relayFetch(url, { type: "text", timeout: 9000 });
+  const xml = await relayFetch(url, { type: "text", timeout });
   const doc = new DOMParser().parseFromString(xml, "text/xml");
   const items = [...doc.querySelectorAll("item")].map((it) => {
     let title = it.querySelector("title")?.textContent || "";
@@ -437,6 +437,15 @@ export function googleNewsLink(query, from, to) {
 }
 
 async function fromSources(googleQuery, gdeltQuery, from, to, errors) {
+  // Running locally (npm start): Google News isn't blocked from a home connection, so use it
+  // first and only fall back to GDELT if it returns nothing.
+  if (globalThis.MACRO_CONFIG?.local) {
+    try {
+      const g = await googleNews(googleQuery, from, to, 20000);
+      if (g.length) return g;
+    } catch (e) { errors.push(`Google News: ${e.message}`); }
+    return to >= GDELT_START ? gdeltNews(gdeltQuery, from, to).catch((e) => { errors.push(e.message); return []; }) : [];
+  }
   const google = googleOk()
     ? googleNews(googleQuery, from, to).catch((e) => { googleFailed(); errors.push(`Google News: ${e.message}`); return []; })
     : null;
