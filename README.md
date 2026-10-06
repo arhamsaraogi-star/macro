@@ -21,6 +21,21 @@ Search any Indian listed company, pick its ticker, and the site will:
 
 Also included: a market-episode calendar (COVID, GFC, demonetisation, elections, Union Budgets, RBI surprises, US tariffs…), a returns-vs-σ-bands chart, CSV export, and shareable links (`/#LT.NS`).
 
+## Run it on your computer (recommended)
+
+No cloud setup, relays or accounts needed. The local server serves the site **and** fetches Yahoo Finance, NSE (prices for SME stocks, exchange filings) and Google News directly from your connection.
+
+1. Install **Node.js 18 or newer** ([nodejs.org](https://nodejs.org), LTS) and **Git** (or use GitHub's "Download ZIP").
+2. Download the code and start it:
+   ```bash
+   git clone https://github.com/arhamsaraogi-star/macro.git
+   cd macro
+   npm start
+   ```
+3. Open **http://localhost:8000**. The first start also builds the NSE/BSE ticker list for search; refresh it any time with `npm run tickers`.
+
+Stop with Ctrl+C. Use `PORT=9000 npm start` (macOS/Linux) or `set PORT=9000 && npm start` (Windows) for another port. Nothing needs installing besides Node: there are no dependencies.
+
 ## Tickers
 
 | Market | Yahoo format | Example |
@@ -31,9 +46,9 @@ Also included: a market-episode calendar (COVID, GFC, demonetisation, elections,
 
 Type a company name to get the matching tickers with NSE/BSE/SME badges. You can also type a raw symbol in caps or a 6-digit BSE code. Without a suffix, the app tries `.NS`, then `.BO`, then the SME variants.
 
-## Hosting (GitHub Pages)
+## Hosting (GitHub Pages, optional)
 
-The site is fully static: all analysis runs in the visitor's browser, so it is hosted on GitHub Pages with no server.
+The hosted copy needs relays because a website on github.io can't fetch other sites' data the way the local server does. The site is fully static: all analysis runs in the visitor's browser, so it is hosted on GitHub Pages with no server.
 
 - **Live URL:** https://arhamsaraogi-star.github.io/macro/
 - **Demo with synthetic data:** https://arhamsaraogi-star.github.io/macro/?demo=1

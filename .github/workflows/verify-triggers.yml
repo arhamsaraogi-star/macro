@@ -17,13 +17,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Start the repo's relay code locally (so unreleased relay changes are tested too)
-        working-directory: relay
+      - name: Start the local server (npm start), exactly as on a laptop
         run: |
-          npx --yes wrangler@3 dev --port 8787 --ip 127.0.0.1 > /tmp/wrangler.log 2>&1 &
-          for i in $(seq 1 60); do curl -s http://127.0.0.1:8787/ >/dev/null && break; sleep 2; done
-          curl -s http://127.0.0.1:8787/; echo
+          npm i --no-save linkedom >/dev/null 2>&1
+          nohup npm start > /tmp/serve.log 2>&1 &
+          for i in $(seq 1 30); do curl -s http://127.0.0.1:8000/relay/ && break; sleep 1; done; echo
       - run: node scripts/verify-triggers.mjs
         env:
           CASES: ${{ github.event.inputs.cases }}
-          RELAY: http://127.0.0.1:8787
+          RELAY: http://127.0.0.1:8000/relay
+          LOCAL: "1"

@@ -3,7 +3,11 @@
 import { readFileSync } from "node:fs";
 
 globalThis.window = globalThis;
+globalThis.location ??= { hostname: process.env.LOCAL ? "localhost" : "cli", origin: "", search: "" };
 eval(readFileSync(new URL("../site/config.js", import.meta.url), "utf8"));
+if (process.env.LOCAL) globalThis.MACRO_CONFIG.local = true;
+// Browsers have DOMParser (used to read Google News RSS); Node needs a stand-in.
+try { globalThis.DOMParser ??= (await import("linkedom")).DOMParser; } catch { /* optional */ }
 if (process.env.RELAY) globalThis.MACRO_CONFIG.relay = process.env.RELAY;
 if (process.env.NEWS_RELAY) globalThis.MACRO_CONFIG.news = process.env.NEWS_RELAY;
 const engine = await import("../site/js/engine.js");
