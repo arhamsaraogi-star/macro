@@ -129,7 +129,7 @@ export async function news({ symbol, name, start, end, sector, industry, extra =
       ...demo.news(cleanCompanyName(name), win.from, win.to),
       ...extra.flatMap((x) => demo.contextNews(x.query, x.scope, win.from, win.to)),
     ];
-    return { window: win, ...rankNews(raw, { start, sector, industry }), errors: [] };
+    return { window: win, ...rankNews(raw, { start, sector, industry, name }), errors: [] };
   }
   return market.news({ symbol, name, start, end, sector, industry, extra });
 }

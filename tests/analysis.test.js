@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import { analyzeBars, findEvents, periods, summarize } from "../site/js/analysis.js";
 import { directCandidates, exchangeOf, parseChart } from "../site/js/market.js";
-import { classify, cleanCompanyName, playbook, rankNews } from "../site/js/news.js";
+import { classify, cleanCompanyName, mentionsCompany, playbook, rankNews } from "../site/js/news.js";
 
 // Deterministic bars: tiny alternating moves, one big jump, optional volume build-up.
 function makeBars({ n = 400, jumpAt = 300, jump = 0.08, buildup = true, noise = 0.01 } = {}) {
@@ -196,4 +196,18 @@ test("peer basket index", () => {
   const b = basket([days(100, 0.02), days(100, 0.0)]);
   assert.ok(b.length >= 90);
   assert.ok(Math.abs(Math.log(b[1].c / b[0].c) - 0.01) < 1e-9); // average of 2% and 0%
+});
+
+test("company headline relevance filter", () => {
+  assert.ok(mentionsCompany("TD Power Systems bags order from Japan", "TD Power Systems Limited", "TDPOWERSYS"));
+  assert.ok(!mentionsCompany("Textiles firm Trident posts lower Q3 profit", "TD Power Systems Limited", "TDPOWERSYS"));
+  assert.ok(!mentionsCompany("Jyoti CNC Automation IPO: should you subscribe?", "TD Power Systems Limited", "TDPOWERSYS"));
+  assert.ok(mentionsCompany("Larsen & Toubro wins mega order", "Larsen & Toubro Limited", "LT"));
+  assert.ok(mentionsCompany("Tata Motors Q2 results: profit up", "Tata Motors Limited", "TATAMOTORS"));
+  assert.ok(!mentionsCompany("Tata Steel shares fall", "Tata Motors Limited", "TATAMOTORS"));
+  assert.ok(mentionsCompany("HAL shares surge on defence order", "Hindustan Aeronautics Limited", "HAL"));
+  assert.ok(mentionsCompany("Krishca Strapping IPO lists at premium", "Krishca Strapping Solutions Limited", "KRISHCA"));
+  const r = rankNews([{ title: "Trident Q3 profit falls", date: "2024-01-02" }, { title: "TD Power Systems Q3 profit jumps", date: "2024-01-02" }],
+    { start: "2024-01-02", name: "TD Power Systems Limited", ticker: "TDPOWERSYS" });
+  assert.equal(r.items.length, 1);
 });

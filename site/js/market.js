@@ -287,6 +287,6 @@ export function news({ symbol, name, start, end, sector = "", industry = "", ext
       googleNews(query, win.from, win.to).then((items) => items.slice(0, 6).map((it) => ({ ...it, scope }))).catch((e) => { errors.push(e.message); return []; })));
     raw.push(...ctx.flat());
     if (!raw.length && errors.length) throw new RelayError(errors[0]);
-    return { window: win, ...rankNews(raw, { start, sector, industry }), errors };
+    return { window: win, ...rankNews(raw, { start, sector, industry, name: name || symbol, ticker: base }), errors };
   });
 }
