@@ -406,7 +406,8 @@ async function gdeltNews(query, from, to, attempt = 0) {
     clearTimeout(timer);
   }
   let body;
-  try { body = JSON.parse(text); } catch { return []; }
+  // GDELT answers errors (e.g. "phrase too short") as plain text: surface them.
+  try { body = JSON.parse(text); } catch { throw new Error(`GDELT: ${text.trim().slice(0, 80)}`); }
   const tidy = (t) => (t || "").replace(/\s+([,;:%?!.])/g, "$1").replace(/\s+'\s*/g, "'").replace(/(\d), (\d{3})/g, "$1,$2").replace(/\s{2,}/g, " ").trim();
   return (body.articles || []).map((a) => ({
     title: tidy(a.title), url: a.url, source: a.domain, via: "gdelt",
@@ -453,8 +454,11 @@ export function news({ symbol, name, start, end, sector = "", industry = "", ext
   const key = `n:${symbol}:${near.from}:${near.to}:${extra.map((x) => x.query).join("|")}`;
   return cached(key, async () => {
     const errors = [];
-    const terms = [phrase, ...new Set(extra.flatMap((x) => (x.scope === "market" ? ["sensex", "nifty"] : [`"${x.query}"`])))];
-    const gq = `${terms.length > 1 ? `(${terms.join(" OR ")})` : phrase} sourcelang:english`;
+    // GDELT ignores very short words (ITC, LT, BEL…): search "ITC shares" / "ITC stock" instead.
+    const short = (clean || base).replace(/[^a-z0-9]/gi, "").length < 5;
+    const names = short ? [`"${clean || base} shares"`, `"${clean || base} stock"`, `"${clean || base} share price"`, `"${clean || base} ltd"`] : [phrase];
+    const terms = [...names, ...new Set(extra.flatMap((x) => (x.scope === "market" ? ["sensex", "nifty"] : [`"${x.query}"`])))];
+    const gq = `${terms.length > 1 ? `(${terms.join(" OR ")})` : terms[0]} sourcelang:english`;
     const raw = (await fromSources(phrase, gq, near.from, near.to, errors)).map((it) => {
       if (it.via === "google") return it;
       const scope = mentionsCompany(it.title, clean || base, base) ? "company" : MARKET_WORDS.test(it.title) ? "market" : "sector";
