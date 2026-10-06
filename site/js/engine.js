@@ -54,7 +54,7 @@ export async function analyze({ symbol, hint = {}, mode, thresholds, years, sigm
     return bars ? [{ symbol: null, name: `${book.name} peers`, peers: used, query: book.newsQuery }, bars] : [null, null];
   };
   const [bench, [sectorIdx, sectorBars], ...factorBars] = await Promise.all([
-    load(benchSym), loadSector(), ...factorDefs.map((f) => load(f.symbol)),
+    load(benchSym), loadSector(), ...factorDefs.map((f) => (f.basket ? Promise.all(f.basket.map(load)).then(basket) : load(f.symbol))),
   ]);
   const context = {
     market: bench && { name: benchName, bars: bench },
@@ -110,13 +110,16 @@ function triggerMatrix(defs, factorBars, bench, sectorBars, sectorIdx, benchName
 /** Market / sector / commodity searches worth running for this event. */
 export function contextQueries(ev, data) {
   const out = [];
-  if (ev.driver === "market" || ev.episodes?.length || Math.abs(ev.benchmarkZ ?? 0) >= 2) out.push({ query: "Sensex Nifty", scope: "market" });
-  if (ev.driver === "sector" || Math.abs(ev.sectorZ ?? 0) >= 2) {
-    const q = data.industry?.newsQuery || data.sectorIndex?.query;
-    if (q) out.push({ query: q, scope: "sector" });
+  // Market news whenever the market itself moved notably or it was market-driven / an episode.
+  if (ev.driver === "market" || ev.alsoMoved?.includes("market") || ev.episodes?.length || Math.abs(ev.benchmarkZ ?? 0) >= 1.5) {
+    out.push({ query: "Sensex Nifty", scope: "market" });
   }
+  // Sector news for every big move: sector-wide triggers often never name the company.
+  const q = data.industry?.newsQuery || data.sectorIndex?.query;
+  if (q) out.push({ query: q, scope: "sector" });
+  // Commodity / theme news when that factor moved unusually.
   for (const f of ev.factors || []) {
-    if ((f.notable || f.explains) && f.kind === "factor" && out.length < 4) out.push({ query: factorQuery(f.key), scope: "sector" });
+    if ((f.notable || f.explains) && f.kind === "factor" && out.length < 5) out.push({ query: factorQuery(f.key), scope: "sector" });
   }
   return out;
 }
@@ -135,3 +138,24 @@ export async function news({ symbol, name, start, end, sector, industry, extra =
 }
 
 export const { getCustomProxy, setCustomProxy, relayUrl, RelayOutdatedError } = market;
+
+const pctTxt = (x) => `${x > 0 ? "+" : ""}${(x * 100).toFixed(0)}%`;
+
+/**
+ * Best one-line explanation of a move, combining the driver (market / sector / stock),
+ * macro or theme factors that explain it, and the company headlines (if loaded).
+ */
+export function triggerText(e, n, data) {
+  const labelOf = (k) => data.categoryLabels?.[k] || k;
+  const theme = e.factors?.filter((f) => f.explains).sort((a, b) => Math.abs(b.z) - Math.abs(a.z))[0];
+  const themeTxt = theme ? `${theme.name} ${pctTxt(theme.change)}` : "";
+  const word = e.direction === "up" ? "rally" : "sell-off";
+  const partial = e.alsoMoved?.length ? ` + ${e.alsoMoved.join(" & ")} ${word}` : "";
+  if (e.driver === "market") return { key: "market_wide", text: [e.episodes?.[0]?.name || "Market-wide move", themeTxt].filter(Boolean).join(" · ") };
+  if (e.driver === "sector") return { key: "sector_wide", text: [`${data.sectorIndex?.name || "Sector"} ${word}`, themeTxt].filter(Boolean).join(" · ") };
+  const company = n?.likelyTrigger ? labelOf(n.likelyTrigger) : "";
+  if (!n && !theme && !partial) return null;
+  const parts = [company || themeTxt || (n ? "unclear" : "Stock-specific")];
+  if (company && themeTxt) parts.push(themeTxt);
+  return { key: n?.likelyTrigger || (theme ? "macro" : "other"), text: parts.join(" · ") + partial };
+}

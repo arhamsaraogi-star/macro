@@ -39,19 +39,10 @@ import * as engine from "./engine.js";
   const DRIVER = { market: "Market-wide", sector: "Sector-wide", stock: "Stock-specific" };
   const EXTRA_LABELS = { market_wide: "Market-wide move (index-led)", sector_wide: "Sector-wide move" };
   const label = (k) => EXTRA_LABELS[k] || state.data?.categoryLabels?.[k] || k;
-  const driverChip = (d) => `<span class="drv ${d}">${DRIVER[d]}</span>`;
+  const driverChip = (d, also = []) => `<span class="drv ${d}">${DRIVER[d]}${also.length ? ` + ${also.join(" & ")}` : ""}</span>`;
   const notableFactors = (e) => (e.factors || []).filter((f) => f.notable && f.kind === "factor");
-  /** Best single-line explanation of a move: driver first, then company news. */
-  function triggerOf(e) {
-    if (e.driver === "market") return { key: "market_wide", text: e.episodes?.[0]?.name || "Market-wide move" };
-    if (e.driver === "sector") {
-      const f = notableFactors(e)[0];
-      return { key: "sector_wide", text: `${state.data.sectorIndex?.name || "Sector"} move${f ? ` · ${f.name} ${pct(f.change, 0)}` : ""}` };
-    }
-    const n = state.news.get(e.id);
-    if (!n) return null;
-    return { key: n.likelyTrigger || "other", text: n.likelyTrigger ? label(n.likelyTrigger) : "unclear" };
-  }
+  const triggerOf = (e) => engine.triggerText(e, state.news.get(e.id), state.data);
+
 
   function relayHelp(msg) {
     if (/No data relay/.test(msg)) { showRelaySetup(true); return `Connect a data relay first (one-time, ~2 minutes) — see the steps above.`; }
@@ -404,7 +395,7 @@ import * as engine from "./engine.js";
         <td>${dateTxt}</td>
         <td class="${cls(e.change)}"><b>${pct(e.change)}</b></td>
         <td>${e.zScore == null ? "—" : num(Math.abs(e.zScore), 1) + "σ"}</td>
-        <td>${driverChip(e.driver)}</td>
+        <td>${driverChip(e.driver, e.alsoMoved)}</td>
         <td class="${cls(e.benchmarkChange)}">${pct(e.benchmarkChange, 1)}</td>
         <td class="${cls(e.sectorChange)}">${pct(e.sectorChange, 1)}</td>
         <td class="${cls(e.pre.change)}">${pct(e.pre.change, 1)}</td>
@@ -513,8 +504,12 @@ import * as engine from "./engine.js";
     const macro = [];
     for (const x of e.episodes) macro.push(`<b>${esc(x.name)}</b> <span class="muted">(${esc(x.kind)})</span>`);
     if (e.driver === "market") macro.push(`${esc(d.benchmark.name)} ${pct(e.benchmarkChange, 1)} — the whole market moved`);
+    if (e.alsoMoved?.includes("market")) macro.push(`${esc(d.benchmark.name)} ${pct(e.benchmarkChange, 1)} (${num(Math.abs(e.benchmarkZ), 1)}σ) — the market also moved sharply the same way`);
     for (const f of e.factors.filter((f) => f.explains)) {
       macro.push(`<b>${esc(f.name)} ${pct(f.change, 1)}</b> (${num(Math.abs(f.z), 1)}σ) → ${f.sens * f.change > 0 ? "tailwind" : "headwind"} for ${esc(ind)} <span class="muted">(${esc(f.why)})</span>`);
+    }
+    for (const f of e.factors.filter((f) => !f.explains && f.kind === "factor" && Math.abs(f.z ?? 0) >= 2)) {
+      macro.push(`${esc(f.name)} ${pct(f.change, 1)} (${num(Math.abs(f.z), 1)}σ) <span class="muted">— big move, but not in the direction that explains this ${esc(dirTxt)}</span>`);
     }
     const vix = e.factors.find((f) => f.kind === "vol");
     if (vix && Math.abs(vix.change) >= 0.15) macro.push(`India VIX ${pct(vix.change, 0)} — ${vix.change > 0 ? "risk-off" : "risk-on"}`);
@@ -528,7 +523,11 @@ import * as engine from "./engine.js";
     levels.push(["Macro", macro]);
     // Industry
     const indL = [];
-    if (e.sectorChange != null) indL.push(`${esc(d.sectorIndex?.name || "Sector")} ${pct(e.sectorChange, 1)}${e.driver === "sector" ? " — sector-wide move" : ""}`);
+    if (e.sectorChange != null) {
+      const sz = e.sectorZ != null ? ` (${num(Math.abs(e.sectorZ), 1)}σ)` : "";
+      const why = e.driver === "sector" ? " — sector-wide move" : e.alsoMoved?.includes("sector") ? " — the sector also sold off / rallied sharply; the stock moved further" : "";
+      indL.push(`${esc(d.sectorIndex?.name || "Sector")} ${pct(e.sectorChange, 1)}${sz}${why}`);
+    }
     for (const [b, c] of bucketsOf(ctxNews("sector"))) indL.push(`Sector / commodity news: <b>${esc(B(b))}</b> ×${c} <span class="muted">${esc(T(b))}</span>`);
     levels.push([`Industry · ${esc(ind)}`, indL]);
     // Company
@@ -586,7 +585,7 @@ import * as engine from "./engine.js";
       <div class="dw-title">${e.frame} move · ${dateTxt}</div>
       <div class="dw-move ${cls(e.change)}">${pct(e.change)}</div>
       <div class="dw-sub">₹${num(e.prevClose)} → ₹${num(e.close)} ${e.zScore != null ? `· <b>${num(Math.abs(e.zScore), 1)}σ</b> vs trailing ${state.data.params.sigmaYears}y` : ""}</div>
-      <div style="margin-top:10px">${driverChip(e.driver)}</div>
+      <div style="margin-top:10px">${driverChip(e.driver, e.alsoMoved)}</div>
       <div class="kv">
         <div><small>Pre-week</small><b class="${cls(e.pre.change)}">${pct(e.pre.change, 1)}</b></div>
         <div><small>Pre-vol ×</small><b>${times(e.pre.volumeRatio)}</b></div>

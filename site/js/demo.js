@@ -23,7 +23,7 @@ const HEADLINES = [
   "{n} guidance: management sees 20% revenue growth in FY",
 ];
 
-export const enabled = () => new URLSearchParams(location.search).has("demo");
+export const enabled = () => new URLSearchParams(globalThis.location?.search || "").has("demo");
 
 function rng(seedStr) {
   let a = [...seedStr].reduce((s, c) => (s * 31 + c.charCodeAt(0)) >>> 0, 7);

@@ -42,6 +42,9 @@ export const CATEGORIES = [
     /\bceo\b/i, /\bcfo\b/i, /\bmd\b/i, /chairman/i, /resign/i, /appoint/i, /steps down/i,
     /auditor/i, /fraud/i, /governance/i, /whistle/i,
   ]],
+  ["ai_theme", "AI / data-centre theme", [
+    /\bai\b/i, /artificial intelligence/i, /gen ?ai/i, /data ?cent(er|re)/i, /hyperscaler/i, /nvidia/i, /ai (capex|bubble|slowdown|spending|demand|trade)/i,
+  ]],
   ["macro", "Market-wide / macro / commodity", [
     /sensex/i, /nifty/i, /market(s)? (crash|rally|fall|surge)/i, /crude/i, /oil price/i,
     /rupee/i, /inflation/i, /rate (cut|hike)/i, /\bfed\b/i, /global/i, /steel price/i,
