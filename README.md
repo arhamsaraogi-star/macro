@@ -4,26 +4,22 @@
 
 Search any Indian listed company, pick its ticker, and the site will:
 
-1. **Pull up to 20 years (or the full listed history)** of daily prices & volumes from Yahoo Finance (split/bonus adjusted).
-2. **Find every big move**, daily, weekly and monthly, using either:
-   - **% move**: e.g. ±5% in a day, a week or a month, or
-   - **σ move**: e.g. a 2σ move, where σ is the trailing standard deviation of that frame's returns over a 1/2/3/5-year lookback. The current period is excluded, so there's no look-ahead.
-3. **Look at the week before each move** (5 sessions before the period starts):
-   - price drift in the same or the opposite direction
-   - volume build-up vs the 50-day baseline before that week (≥1.5× is flagged)
-   - volume during the move, the index (NIFTY 50 / SENSEX) move over the same period (market-driven or stock-specific), and the next 5 sessions (follow-through or reversal)
-4. **Separate market, sector and company moves.** For every move, the app checks the same period (and the week before) in:
-   - the broad market (NIFTY 50 / SENSEX);
-   - the stock's NIFTY sector index (Auto, Bank, Financial Services, IT, Pharma, Metal, Energy, Realty, FMCG, Media, Infrastructure);
-   - commodities and macro factors relevant to the sector: Brent crude, natural gas, gold, silver, copper, aluminium, steel (HRC), sugar, cotton, USD/INR, the US 10-year yield, and India VIX. Each is scored in σ against its own volatility, so a "notable" move means one that was unusual for that commodity.
-   - a dated list of market-wide episodes: GFC 2008, taper tantrum, the 2014–16 oil crash, demonetisation, IL&FS, COVID crash and second wave, Russia–Ukraine, Adani–Hindenburg, election results, Union Budgets, US tariffs and more.
+1. **Pull up to 20 years (or full listed history)** of daily prices and volumes from Yahoo Finance (split/bonus adjusted).
+2. **Find every big move.** You choose the frames (any of **daily**, **weekly**, **monthly**) and the trigger type:
+   - **% move:** e.g. ±5%.
+   - **σ move:** e.g. 2σ, measured against the trailing 1/2/3/5-year standard deviation of that frame's returns. There is no look-ahead.
+3. **Look at the week before each move:** price drift, volume build-up vs the 50-day baseline, volume on the move, and follow-through over the next 5 sessions.
+4. **Separate market, sector and company drivers.** Each move is compared with NIFTY/SENSEX and with the stock's sector, then labelled market-wide, sector-wide or stock-specific. The sector is the real NIFTY index where Yahoo has daily history (Bank, IT, Pharma); otherwise it is an equal-weighted basket of the industry's listed leaders.
+5. **Run the industry trigger engine.** About 45 Indian industry playbooks (banks, NBFCs, IT, cement, EPC, capital goods, autos, steel, chemicals, pharma, FMCG, airlines, real estate, defence, railways…) each list:
+   - what makes the industry rally or sell off, and the metrics to watch;
+   - its **macro sensitivities**: rates, USD/INR, crude, the dollar, China, US equities, metals, gas, sugar, cotton, gold, VIX, and mid-cap liquidity.
 
-   Each move is labelled **market-wide** (the index moved at least half as much in the same direction), **sector-wide** (the sector index did), or **stock-specific**.
-5. **Pull the news around the move** (from 1 week before to 2 days after) and tag each headline as a trigger type: order wins, monthly sales, results, guidance/capex, dividends/bonus/splits, M&A/promoter activity, QIP/block deals, broker calls, regulatory/USFDA/policy, management change, or macro.
-   For market- and sector-wide moves it also searches market news (Sensex/Nifty) and sector or commodity news (e.g. "crude oil price").
-6. **Trigger DNA** shows the market / sector / stock split for up-moves and down-moves, which episodes and commodity moves lined up with them, and then scans the news behind the N biggest moves and shows what usually moves *this* stock. For example, orders for capital goods companies and monthly sales numbers for autos. The sector's typical triggers are shown as a "playbook".
+   Each move then gets a **trigger chain** (macro → industry → company → direction). A macro factor counts as an explanation only when it moved at least 1.5σ in the direction that would cause this move for this industry; for example, crude −9% is a tailwind for airlines.
+6. **Show a trigger matrix now:** each factor's last-3-month move, and whether that is a tailwind or a headwind for the industry.
+7. **Pull news around each move:** company, sector/commodity and market headlines from Google News for that date window. Each headline is tagged with an event type, a **master trigger bucket** (demand, pricing, costs, margins, capacity, competition, regulation, rates, currency, commodities, government spending, orders, credit cycle, liquidity, technology, inventory, balance sheet, M&A, earnings, positioning, macro shock, monsoon, inflation, management) with its horizon tier (structural / cyclical / quarterly / sentiment), and a tone. Company headlines that don't actually name the company are dropped.
+8. **Trigger DNA:** for the biggest moves, shows the market/sector/stock split, which episodes and macro factors explained them, and which trigger buckets dominate around rallies vs sell-offs.
 
-There is also a daily returns vs ±kσ bands chart (with the breach rate vs what a normal distribution would give), a chart of big moves by year, an event table you can sort and filter, CSV export, and shareable URLs (`/#LT.NS`).
+Also included: a market-episode calendar (COVID, GFC, demonetisation, elections, Union Budgets, RBI surprises, US tariffs…), a returns-vs-σ-bands chart, CSV export, and shareable links (`/#LT.NS`).
 
 ## Tickers
 
@@ -43,17 +39,19 @@ The site is fully static: all analysis runs in the visitor's browser, so it is h
 - **Demo with synthetic data:** https://arhamsaraogi-star.github.io/macro/?demo=1
 - **Deploys:** `.github/workflows/pages.yml` runs the tests and publishes `site/` to the `gh-pages` branch on every push to the default branch. Pages serves that branch.
 
-### Data relay
+### Data relay (one-time, ~2 minutes)
 
-Yahoo Finance and Google News don't allow direct calls from other websites (no CORS headers), so the browser fetches them through a relay:
+Yahoo Finance and Google News don't allow requests from other websites, and the free public CORS relays are all down or paid now (tested in CI). The site therefore reads data through **your own free Cloudflare Worker**:
 
-1. **By default:** a chain of free public CORS relays (allorigins, codetabs, corsproxy.io). This needs no setup, but they can be slow, rate-limited or down.
-2. **Recommended:** your own free Cloudflare Worker.
-   - Go to [dash.cloudflare.com](https://dash.cloudflare.com) → **Workers & Pages** → **Create** → **Worker**.
-   - Paste [`relay/worker.js`](relay/worker.js) and click **Deploy**.
-   - Copy the `https://….workers.dev` URL and paste it into the site's **Settings** (gear icon, top right).
+1. Go to [dash.cloudflare.com](https://dash.cloudflare.com/sign-up/workers-and-pages) → **Workers & Pages** → **Create** → **Create Worker** → name it `macro-relay` → **Deploy**.
+2. Click **Edit code**, replace everything with [`relay/worker.js`](relay/worker.js), and click **Deploy**.
+3. Copy the `https://macro-relay.<you>.workers.dev` URL and paste it into the site's setup box or **Settings** (gear icon).
 
-   The worker only forwards requests to Yahoo Finance and Google News, caches them for 1 hour, and the free tier allows 100k requests a day. The relay URL is saved in your browser only.
+The worker only forwards to Yahoo Finance and Google News, caches responses for an hour, and stays within the free tier (100k requests a day). To make the site work for **every** visitor, put the URL in `site/config.js` (`relay: "https://…"`). To share a ready-to-use link instead, use `https://arhamsaraogi-star.github.io/macro/?relay=<url>`.
+
+`.github/workflows/relay-test.yml` runs the worker locally in CI and fetches real Yahoo and Google News data through it.
+
+Company search doesn't need the relay: it uses the official NSE (main board + SME) and BSE lists, built into the site on each deploy and refreshed weekly.
 
 ## Develop
 
@@ -72,7 +70,10 @@ site/
   js/analysis.js             period returns, % / σ thresholds, pre-week forensics, summaries
   js/market.js               Yahoo search/chart + Google News through the relay chain
   js/news.js                 headline -> trigger classification, sector playbooks
-  js/context.js              sector indices, commodity/macro factors, market-episode calendar
+  js/context.js              macro factors, sector index / peer baskets, market-episode calendar
+  js/playbooks.js            industry trigger playbooks, master trigger buckets, macro triggers
+  config.js                  site-wide relay URL
+scripts/build-tickers.mjs    builds site/data/tickers.json from NSE / BSE lists (CI)
   js/demo.js                 synthetic data for ?demo=1
   vendor/                    TradingView lightweight-charts (Apache-2.0)
 relay/worker.js              optional Cloudflare Worker relay
@@ -82,7 +83,8 @@ tests/                       node:test unit tests
 ## Caveats
 
 - Yahoo Finance is unofficial. Coverage of SME stocks and very old history can be patchy, and some SME counters only exist on one exchange.
-- BSE SME stocks can't be told apart from BSE main-board stocks by their Yahoo ticker, so they show as BSE.
+- Yahoo has no daily history for most NIFTY sector indices, so those sectors use a basket of 3–5 listed leaders as a proxy.
+- Rates sensitivity uses the US 10-year yield (Yahoo has no Indian G-sec series). Indian rate events are covered through the episode calendar (RBI surprises) and rate headlines.
 - Google News coverage before ~2010 and for small companies is thin. The trigger classification uses keyword rules, so treat it as a lead to read the headlines, not a verdict.
 - The market-wide label is mechanical. For heavyweight index stocks (e.g. Reliance, HDFC Bank), the stock itself moves the index, so a "market-wide" label there can be partly self-caused.
 - The episode calendar is hand-curated and won't cover every event. Add to `EPISODES` in `site/js/context.js`.
