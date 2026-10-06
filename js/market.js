@@ -554,7 +554,7 @@ export function news({ symbol, name, start, end, sector = "", industry = "", ext
     });
     const ranked = rankNews([...(await filingsTask), ...raw], { start, end, sector, industry, name: clean || symbol, ticker: base });
     return {
-      window: near, link: googleNewsLink(phrase, near.from, near.to), errors, via: "gdelt",
+      window: near, link: googleNewsLink(phrase, near.from, near.to), errors, via: raw.some((it) => it.via === "google") ? "google" : "gdelt",
       archiveNote: near.to < GDELT_START ? "Headlines before 2017 need the Google News relay (Settings); until then use the Google News link." : "",
       ...ranked,
     };
