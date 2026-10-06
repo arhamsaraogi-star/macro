@@ -256,6 +256,10 @@
       <label class="ctl" style="margin-top:14px"><span>Your relay URL</span>
         <input id="proxyUrl" type="url" placeholder="https://macro-relay.yourname.workers.dev" style="width:100%" />
       </label>
+      <label class="ctl" style="margin-top:14px"><span>Google News relay (optional, recommended)</span>
+        <input id="newsRelayUrl" type="url" placeholder="https://script.google.com/macros/s/…/exec" style="width:100%" />
+      </label>
+      <p class="muted" style="font-size:12.5px;margin:6px 0 0">Google blocks Cloudflare from Google News. A free Google Apps Script relay runs on Google's own servers: open <a href="https://script.google.com/home/projects/create" target="_blank" rel="noopener">script.google.com → New project</a>, paste <a href="https://raw.githubusercontent.com/arhamsaraogi-star/macro/HEAD/relay/google-news.gs" target="_blank" rel="noopener">this code</a>, then <b>Deploy → New deployment → Web app</b> (Execute as: Me, Who has access: Anyone) and paste the web-app URL here.</p>
       <p id="proxyMsg" class="neg" style="min-height:18px;font-size:13px"></p>
       <div class="row" style="justify-content:flex-end">
         <button class="btn ghost" id="proxyCancel">Cancel</button>

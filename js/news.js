@@ -56,7 +56,7 @@ export const CATEGORIES = [
 ];
 // All matching categories are kept; PRIORITY picks the "primary" one (specific beats generic).
 export const DRIVER_LABELS = { market: "Market-wide move", sector: "Sector-wide move", stock: "Stock-specific" };
-const PRIORITY = ["corporate_action", "deal", "fundraise", "orders", "sales", "guidance", "management",
+const PRIORITY = ["corporate_action", "fundraise", "deal", "orders", "sales", "guidance", "management",
   "regulatory", "results", "rating", "macro"];
 export const CATEGORY_LABELS = Object.fromEntries([...CATEGORIES.map(([k, l]) => [k, l]), ["other", "Other / general"]]);
 
@@ -123,7 +123,7 @@ export function mentionsCompany(title, name, ticker = "") {
 
 /** Score, dedupe and summarise raw headlines ({title,url,source,date}). */
 export function rankNews(raw, { start, sector = "", industry = "", name = "", ticker = "" }) {
-  // items carry scope: "company" (default), "sector" or "market"
+  // items carry scope: "filing" (exchange filing), "company" (default), "sector" or "market"
   const preferred = new Set(playbook(sector, industry));
   const seen = new Set();
   const items = [];
@@ -133,24 +133,28 @@ export function rankNews(raw, { start, sector = "", industry = "", name = "", ti
     // Search engines match names anywhere in the article; keep company headlines that name the company.
     if ((it.scope || "company") === "company" && name && !mentionsCompany(it.title, name, ticker)) continue;
     seen.add(key);
-    const cats = classify(it.title);
-    let score = 1;
+    const text = it.scope === "filing" ? `${it.desc || ""} ${it.title}` : it.title;
+    const cats = classify(text);
+    let score = it.scope === "filing" ? 2 : 1;
     if (cats.some((c) => preferred.has(c))) score += 1;
     if (cats[0] !== "other") score += 0.5;
     if (it.date) score += Math.max(0, 1 - Math.abs(Date.parse(it.date) - Date.parse(start)) / (10 * 864e5));
-    const trig = classifyTrigger(it.title);
+    const trig = classifyTrigger(text);
     items.push({ ...it, scope: it.scope || "company", categories: cats, primary: cats[0], buckets: trig.buckets, tone: trig.tone, score: Math.round(score * 100) / 100 });
   }
   items.sort((a, b) => b.score - a.score || (a.date || "").localeCompare(b.date || ""));
+  const filings = items.filter((it) => it.scope === "filing");
   const company = items.filter((it) => it.scope === "company");
+  // Exchange filings are the company's own disclosure: they count double.
   const counts = {};
   for (const it of company) counts[it.primary] = (counts[it.primary] || 0) + 1;
+  for (const it of filings) if (it.primary !== "other") counts[it.primary] = (counts[it.primary] || 0) + 2;
   // Market wraps that merely mention the company ("Sensex falls; X worst performer") are "macro":
   // let specific company triggers win whenever there are any.
   const ranked = Object.entries(counts).sort((a, b) => b[1] - a[1]);
   const likely = (ranked.find(([k]) => k !== "other" && k !== "macro") || ranked.find(([k]) => k !== "other"))?.[0] ?? null;
-  const context = items.filter((it) => it.scope !== "company").slice(0, 12);
+  const context = items.filter((it) => it.scope === "sector" || it.scope === "market").slice(0, 12);
   const buckets = {};
-  for (const it of [...company, ...context]) for (const b of it.buckets) buckets[b] = (buckets[b] || 0) + 1;
-  return { items: [...company.slice(0, 25), ...context], categoryCounts: counts, likelyTrigger: likely, bucketCounts: buckets };
+  for (const it of [...filings, ...company, ...context]) for (const b of it.buckets) buckets[b] = (buckets[b] || 0) + 1;
+  return { items: [...filings.slice(0, 12), ...company.slice(0, 25), ...context], categoryCounts: counts, likelyTrigger: likely, bucketCounts: buckets };
 }
