@@ -46,8 +46,10 @@ jobs:
         run: |
           R=http://127.0.0.1:8787/?url=
           NOW=$(date +%s)
-          for s in ^NSEI ^NSEBANK ^CNXIT ^CNXAUTO ^CNXMETAL ^CNXENERGY ^CNXREALTY ^CNXFMCG ^CNXMEDIA ^CNXINFRA NIFTY_FIN_SERVICE.NS ^CNXPSUBANK ^CNXPSE ^CNXCMDT ^CNXCONSUM ^NSEMDCP50 ^CNXSC ^INDIAVIX INFRABEES.NS BANKBEES.NS; do
-            e=$(node -e 'console.log(encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(process.argv[1])}?period1=0&period2=${process.argv[2]}&interval=1d&events=div%2Csplit&includeAdjustedClose=true`))' "$s" "$NOW")
+          for spec in "^CNXAUTO|range=10y" "^CNXAUTO|range=5y" "^CNXAUTO|period1=1312156800" "^CNXMETAL|range=10y" "^CNXINFRA|range=10y" "^CNXINFRA|period1=1280620800" "NIFTY_FIN_SERVICE.NS|range=10y" "^CNXFMCG|range=10y" "^CNXENERGY|range=10y" "^CNXREALTY|range=10y" "^CNXMEDIA|range=10y" "^CNXSC|range=10y" "^CNXPSUBANK|range=10y" "^CNXAUTO|range=2y"; do
+            s=${spec%%|*}; q=${spec#*|}; case $q in period1=*) q="$q&period2=$NOW";; esac
+            e=$(node -e 'console.log(encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(process.argv[1])}?${process.argv[2]}&interval=1d`))' "$s" "$q")
+            s="$s [$q]"
             n=$(curl -s -m 30 "$R$e" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{const r=JSON.parse(d).chart.result;if(!r){console.log("none");return}const t=r[0].timestamp||[];const gaps=t.slice(1).map((x,i)=>(x-t[i])/86400).sort((a,b)=>a-b);const iso=x=>new Date(x*1000).toISOString().slice(0,10);console.log(`${t.length} bars ${t.length?iso(t[0]):""}..${t.length?iso(t.at(-1)):""} medianGapDays=${gaps.length?gaps[gaps>>1]??gaps[Math.floor(gaps.length/2)]:"-"}`)}catch(e){console.log("err",e.message)}})')
             echo "$s -> $n"
           done
