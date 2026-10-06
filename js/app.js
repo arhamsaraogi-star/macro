@@ -240,7 +240,9 @@ import * as engine from "./engine.js";
       <span class="muted">· data since ${fmtDate(d.firstDate)} (${d.listedYears}y)</span>`;
     const ctx = [d.benchmark.available && d.benchmark.name, d.sectorIndex?.available && d.sectorIndex.name,
       ...d.factorsTracked.filter((f) => f.available).map((f) => f.name)].filter(Boolean);
-    $("#coMeta").innerHTML += `<div class="ctx-line">Compared against: ${ctx.map((c) => `<span class="chip">${esc(c)}</span>`).join("") || `<span class="muted">market data unavailable</span>`}</div>`;
+    const peerTip = d.sectorIndex?.peers ? ` title="Equal-weighted daily basket: ${esc(d.sectorIndex.peers.join(", "))}"` : "";
+    $("#coMeta").innerHTML += `<div class="ctx-line">Compared against: ${ctx.map((c) => `<span class="chip"${c === d.sectorIndex?.name ? peerTip : ""}>${esc(c)}</span>`).join("") || `<span class="muted">market data unavailable</span>`}</div>`;
+    if (d.sectorIndex?.peers) $("#coMeta").innerHTML += `<div class="ctx-line muted">Sector proxy = equal-weighted ${esc(d.sectorIndex.peers.join(", "))} (Yahoo has no daily NIFTY index for this sector)</div>`;
     $("#playbook").innerHTML = `Industry: <span class="chip cat">${esc(d.industry.name)}</span>`;
     const cs = d.currentSigma;
     $("#coRight").innerHTML = `

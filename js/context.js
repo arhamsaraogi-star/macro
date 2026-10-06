@@ -2,18 +2,11 @@
 // and a curated calendar of market-wide episodes (COVID, GFC, elections, budgets…).
 
 /** NIFTY sector index for a Yahoo sector/industry pair (null if none fits). */
+// Only these NIFTY sector indices have daily history on Yahoo; other sectors use peer baskets.
 const SECTOR_INDICES = [
-  [/auto|vehicle|tyre|tire/, "^CNXAUTO", "NIFTY Auto", "auto stocks"],
   [/bank/, "^NSEBANK", "NIFTY Bank", "bank stocks"],
-  [/financial|insurance|credit|capital markets|asset management|lending/, "NIFTY_FIN_SERVICE.NS", "NIFTY Financial Services", "financial stocks NBFC"],
   [/software|information technology|it services|technology/, "^CNXIT", "NIFTY IT", "IT stocks"],
-  [/drug|pharma|healthcare|medical|biotech|diagnostic/, "^CNXPHARMA", "NIFTY Pharma", "pharma stocks"],
-  [/steel|metal|aluminum|aluminium|copper|mining|gold|silver|basic materials/, "^CNXMETAL", "NIFTY Metal", "metal stocks"],
-  [/oil|gas|refin|energy|utilities|power|coal/, "^CNXENERGY", "NIFTY Energy", "energy stocks oil"],
-  [/real estate|realty|reit/, "^CNXREALTY", "NIFTY Realty", "realty stocks"],
-  [/consumer defensive|food|beverage|tobacco|household|personal products|fmcg|packaged/, "^CNXFMCG", "NIFTY FMCG", "FMCG stocks"],
-  [/media|entertainment|broadcast/, "^CNXMEDIA", "NIFTY Media", "media stocks"],
-  [/industrial|engineering|construction|infrastructure|capital goods|machinery|electrical|cement|building/, "^CNXINFRA", "NIFTY Infrastructure", "infrastructure capital goods stocks"],
+  [/drug|pharma|biotech/, "^CNXPHARMA", "NIFTY Pharma", "pharma stocks"],
 ];
 
 export function sectorIndexFor(sector = "", industry = "") {
@@ -42,7 +35,7 @@ export const FACTORS = {
   rates: { symbol: "^TNX", name: "US 10Y yield", query: "bond yields RBI rate" },
   china: { symbol: "000001.SS", name: "Shanghai Composite", query: "China stimulus" },
   spx: { symbol: "^GSPC", name: "S&P 500", query: "US stocks Wall Street" },
-  smallcap: { symbol: "^CNXSC", name: "NIFTY Smallcap", query: "smallcap stocks" },
+  smallcap: { symbol: "^NSEMDCP50", name: "NIFTY Midcap 50", query: "midcap smallcap stocks" },
   vix: { symbol: "^INDIAVIX", name: "India VIX", query: "India VIX" },
 };
 
@@ -152,4 +145,29 @@ export function changeBetween(series, prevDate, endDate) {
   const s = series.sigmaAt(i0);
   const z = s ? Math.log(1 + change) / (s * Math.sqrt(i1 - i0)) : null;
   return { change, z };
+}
+
+/**
+ * Equal-weighted daily "sector index" from peer price histories (Yahoo has no daily
+ * history for most NIFTY sector indices). Each day's return is the average of the
+ * peers' log returns that day; needs at least 2 peers (or 1 if only one is given).
+ */
+export function basket(lists) {
+  lists = lists.filter((l) => l && l.length > 2);
+  if (!lists.length) return null;
+  const need = Math.min(2, lists.length);
+  const sum = new Map(), cnt = new Map();
+  for (const bars of lists) {
+    for (let i = 1; i < bars.length; i++) {
+      if (!(bars[i].c > 0 && bars[i - 1].c > 0)) continue;
+      const r = Math.log(bars[i].c / bars[i - 1].c);
+      if (Math.abs(r) > 0.4) continue; // bad tick / unadjusted corporate action
+      sum.set(bars[i].t, (sum.get(bars[i].t) || 0) + r);
+      cnt.set(bars[i].t, (cnt.get(bars[i].t) || 0) + 1);
+    }
+  }
+  const dates = [...sum.keys()].filter((t) => cnt.get(t) >= need).sort();
+  if (dates.length < 60) return null;
+  let c = 100;
+  return dates.map((t) => ({ t, c: (c *= Math.exp(sum.get(t) / cnt.get(t))) }));
 }
