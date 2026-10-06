@@ -1,0 +1,119 @@
+// Headline -> trigger classification and sector playbooks (pure; tested in Node).
+
+export const CATEGORIES = [
+  ["results", "Quarterly results / earnings", [
+    /\bq[1-4]\b/i, /results?/i, /earnings/i, /net profit/i, /\bprofit\b/i, /\bpat\b/i, /ebitda/i,
+    /revenue/i, /margin/i, /quarter/i, /\bloss\b/i, /beats? estimates/i, /misses? estimates/i,
+  ]],
+  ["orders", "Order wins / contracts", [
+    /\border(s)?\b/i, /order book/i, /contract/i, /\bbags?\b/i, /\bwins?\b.*(project|deal|order)/i,
+    /\bl1\b/i, /tender/i, /letter of (award|intent)/i, /\bloa\b/i, /\bproject\b/i,
+  ]],
+  ["sales", "Monthly sales / business update", [
+    /\bsales\b/i, /despatch/i, /dispatch/i, /volumes?/i, /\bunits\b/i, /business update/i,
+    /deliveries/i, /registrations/i, /loan growth/i, /deposits? growth/i, /\baum\b/i,
+  ]],
+  ["guidance", "Guidance / management commentary", [
+    /guidance/i, /outlook/i, /forecast/i, /\btargets?\b.*(fy|revenue|growth)/i, /capex/i,
+    /expansion/i, /capacity/i, /commission(s|ed|ing)/i, /new plant/i, /launch/i,
+  ]],
+  ["corporate_action", "Dividend / bonus / split / buyback", [
+    /dividend/i, /bonus/i, /split/i, /buy-?back/i, /record date/i, /rights issue/i,
+  ]],
+  ["deal", "M&A / stake sale / promoter activity", [
+    /acqui/i, /merger/i, /amalgamat/i, /demerg/i, /stake/i, /promoter/i, /takeover/i,
+    /open offer/i, /joint venture/i, /\bjv\b/i, /divest/i, /pledge/i,
+  ]],
+  ["fundraise", "Fund raise / block deals / index changes", [
+    /\bqip\b/i, /\bipo\b/i, /\bofs\b/i, /fund ?rais/i, /preferential/i, /block deal/i, /bulk deal/i,
+    /\bfii\b/i, /\bfpi\b/i, /\bmsci\b/i, /index inclusion/i, /mutual fund/i,
+  ]],
+  ["rating", "Broker calls / credit ratings", [
+    /upgrade/i, /downgrade/i, /target price/i, /\bbuy\b/i, /\bsell\b/i, /outperform/i,
+    /underperform/i, /rating/i, /brokerage/i, /\bcrisil\b/i, /\bicra\b/i,
+  ]],
+  ["regulatory", "Regulatory / legal / government policy", [
+    /\bsebi\b/i, /\brbi\b/i, /usfda/i, /\bfda\b/i, /warning letter/i, /import alert/i, /court/i,
+    /tribunal/i, /\bnclt\b/i, /penalty/i, /probe/i, /raid/i, /\bban\b/i, /policy/i, /\bpli\b/i,
+    /tariff/i, /duty/i, /\bgst\b/i, /budget/i, /approval/i, /licen[cs]e/i, /govt|government/i,
+  ]],
+  ["management", "Management change / governance", [
+    /\bceo\b/i, /\bcfo\b/i, /\bmd\b/i, /chairman/i, /resign/i, /appoint/i, /steps down/i,
+    /auditor/i, /fraud/i, /governance/i, /whistle/i,
+  ]],
+  ["macro", "Market-wide / macro / commodity", [
+    /sensex/i, /nifty/i, /market(s)? (crash|rally|fall|surge)/i, /crude/i, /oil price/i,
+    /rupee/i, /inflation/i, /rate (cut|hike)/i, /\bfed\b/i, /global/i, /steel price/i,
+    /metal prices?/i, /monsoon/i, /election/i,
+  ]],
+];
+// All matching categories are kept; PRIORITY picks the "primary" one (specific beats generic).
+const PRIORITY = ["corporate_action", "deal", "fundraise", "orders", "sales", "guidance", "management",
+  "regulatory", "results", "rating", "macro"];
+export const CATEGORY_LABELS = Object.fromEntries([...CATEGORIES.map(([k, l]) => [k, l]), ["other", "Other / general"]]);
+
+const SECTOR_PLAYBOOK = {
+  industrials: ["orders", "results", "guidance", "regulatory"],
+  "capital goods": ["orders", "results", "guidance"],
+  "consumer cyclical": ["sales", "results", "guidance", "regulatory"],
+  auto: ["sales", "results", "regulatory"],
+  "financial services": ["results", "regulatory", "sales", "rating"],
+  healthcare: ["regulatory", "results", "deal"],
+  technology: ["results", "guidance", "orders", "deal"],
+  "basic materials": ["macro", "results", "guidance", "regulatory"],
+  energy: ["macro", "regulatory", "results"],
+  utilities: ["regulatory", "orders", "results"],
+  "real estate": ["sales", "results", "regulatory"],
+  "consumer defensive": ["results", "macro", "guidance"],
+  "communication services": ["regulatory", "results", "deal"],
+};
+
+export function playbook(sector = "", industry = "") {
+  const text = `${sector} ${industry}`.toLowerCase();
+  if (text.includes("auto")) return SECTOR_PLAYBOOK.auto;
+  for (const [k, cats] of Object.entries(SECTOR_PLAYBOOK)) if (text.includes(k)) return cats;
+  return ["results", "orders", "sales", "deal"];
+}
+
+export function classify(title) {
+  const cats = CATEGORIES.filter(([, , pats]) => pats.some((p) => p.test(title))).map(([k]) => k);
+  return cats.length ? cats.sort((a, b) => PRIORITY.indexOf(a) - PRIORITY.indexOf(b)) : ["other"];
+}
+
+const SUFFIX = /\b(limited|ltd\.?|private|pvt\.?|inc\.?|corporation|corp\.?|company|co\.)\s*$/i;
+export function cleanCompanyName(name = "") {
+  let n = name.replace(/\s+/g, " ").trim();
+  for (let i = 0; i < 2; i++) n = n.replace(SUFFIX, "").trim().replace(/^[ ,.-]+|[ ,.-]+$/g, "");
+  return n;
+}
+
+const iso = (d) => d.toISOString().slice(0, 10);
+const addDays = (s, n) => { const d = new Date(s + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return iso(d); };
+
+/** News window for a move: one week before the start to two days after the end. */
+export function newsWindow(start, end) {
+  return { from: addDays(start, -8), to: addDays(end, 3) };
+}
+
+/** Score, dedupe and summarise raw headlines ({title,url,source,date}). */
+export function rankNews(raw, { start, sector = "", industry = "" }) {
+  const preferred = new Set(playbook(sector, industry));
+  const seen = new Set();
+  const items = [];
+  for (const it of raw) {
+    const key = it.title.toLowerCase().slice(0, 90);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const cats = classify(it.title);
+    let score = 1;
+    if (cats.some((c) => preferred.has(c))) score += 1;
+    if (cats[0] !== "other") score += 0.5;
+    if (it.date) score += Math.max(0, 1 - Math.abs(Date.parse(it.date) - Date.parse(start)) / (10 * 864e5));
+    items.push({ ...it, categories: cats, primary: cats[0], score: Math.round(score * 100) / 100 });
+  }
+  items.sort((a, b) => b.score - a.score || (a.date || "").localeCompare(b.date || ""));
+  const counts = {};
+  for (const it of items) counts[it.primary] = (counts[it.primary] || 0) + 1;
+  const likely = Object.entries(counts).sort((a, b) => b[1] - a[1]).find(([k]) => k !== "other")?.[0] ?? null;
+  return { items: items.slice(0, 25), categoryCounts: counts, likelyTrigger: likely };
+}

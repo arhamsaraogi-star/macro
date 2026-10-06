@@ -274,3 +274,13 @@ tbody tr:hover td { background: rgba(255,255,255,.09); }
 }
 .grid2 > *, #results > * { min-width: 0; }
 .chart { width: 100%; }
+.icon-btn { padding: 8px; border-radius: 12px; display: grid; place-items: center; }
+.dialog { max-width: 520px; width: calc(100vw - 32px); color: var(--ink); padding: 24px;
+  background: linear-gradient(160deg, rgba(40,46,86,.92), rgba(14,16,34,.95)); }
+.dialog::backdrop { background: rgba(3,4,10,.55); backdrop-filter: blur(4px); }
+.dialog form { position: relative; z-index: 1; }
+.dialog h2 { margin: 0 0 8px; font-size: 18px; }
+.dialog p { line-height: 1.5; font-size: 14px; }
+.dialog code { font-family: var(--mono); font-size: 12.5px; background: rgba(255,255,255,.08); padding: 1px 6px; border-radius: 6px; }
+.ctl > span { font-size: 11px; text-transform: uppercase; letter-spacing: 0.09em; color: var(--ink-3); font-weight: 600; }
+a { color: var(--accent-2); }

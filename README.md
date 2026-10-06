@@ -25,49 +25,55 @@ There is also a daily returns vs ±kσ bands chart (with the breach rate vs what
 | NSE Emerge (SME) | `SYMBOL-SM.NS` / `SYMBOL-ST.NS` | `XYZ-SM.NS` |
 | BSE (main + SME) | `CODE.BO` or `SYMBOL.BO` | `500325.BO` |
 
-Type a company name to get the matching tickers with NSE/BSE/SME badges. You can also type a raw symbol or a 6-digit BSE code. Without a suffix, the app tries `.NS`, then `.BO`, then the SME variants.
+Type a company name to get the matching tickers with NSE/BSE/SME badges. You can also type a raw symbol in caps or a 6-digit BSE code. Without a suffix, the app tries `.NS`, then `.BO`, then the SME variants.
 
-## Run it
+## Hosting (GitHub Pages)
+
+The site is fully static: all analysis runs in the visitor's browser, so it is hosted on GitHub Pages with no server.
+
+- **Live URL:** https://arhamsaraogi-star.github.io/macro/
+- **Demo with synthetic data:** https://arhamsaraogi-star.github.io/macro/?demo=1
+- **Deploys:** `.github/workflows/pages.yml` runs the tests and publishes `site/` on every push to the default branch.
+- **One-time setup:** if the first deploy fails with a Pages error, go to **Settings → Pages → Build and deployment → Source** and choose **GitHub Actions**, then re-run the workflow.
+
+### Data relay
+
+Yahoo Finance and Google News don't allow direct calls from other websites (no CORS headers), so the browser fetches them through a relay:
+
+1. **By default:** a chain of free public CORS relays (allorigins, codetabs, corsproxy.io). This needs no setup, but they can be slow, rate-limited or down.
+2. **Recommended:** your own free Cloudflare Worker.
+   - Go to [dash.cloudflare.com](https://dash.cloudflare.com) → **Workers & Pages** → **Create** → **Worker**.
+   - Paste [`relay/worker.js`](relay/worker.js) and click **Deploy**.
+   - Copy the `https://….workers.dev` URL and paste it into the site's **Settings** (gear icon, top right).
+
+   The worker only forwards requests to Yahoo Finance and Google News, caches them for 1 hour, and the free tier allows 100k requests a day. The relay URL is saved in your browser only.
+
+## Develop
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload
-# open http://127.0.0.1:8000
+python3 -m http.server -d site 8000   # open http://localhost:8000 (add ?demo=1 to work offline)
+npm test                              # node --test, no dependencies
 ```
-
-Offline demo with synthetic data (no network needed):
-
-```bash
-MACRO_DEMO=1 uvicorn app.main:app
-```
-
-Tests: `pytest -q`
-
-## API
-
-- `GET /api/search?q=larsen` returns candidate tickers (NSE first, then BSE).
-- `GET /api/analyze?symbol=LT.NS&mode=percent&daily=5&weekly=5&monthly=5&years=20`
-  - `mode=sigma&daily=2&sigma_years=1` gives 2σ moves vs the trailing 1-year σ
-  - `years=max` analyses since listing
-- `GET /api/news?symbol=LT.NS&name=Larsen%20%26%20Toubro&start=2024-01-02&end=2024-01-02&sector=Industrials`
 
 ## Structure
 
 ```
-app/
-  main.py      FastAPI routes + static hosting
-  market.py    Yahoo search, ticker resolution (NSE/BSE/SME), history, caching
-  analysis.py  period returns, % / σ thresholds, pre-week forensics, summaries
-  news.py      Google News (date-windowed) fetch + trigger classification + sector playbooks
-  demo.py      synthetic data for MACRO_DEMO=1
-static/        liquid-glass single-page UI (vanilla JS + TradingView lightweight-charts, vendored)
-tests/
+site/
+  index.html, styles.css     liquid-glass UI
+  js/app.js                  UI: search, charts, event drawer, trigger DNA, CSV
+  js/engine.js               data API used by the UI (live or demo)
+  js/analysis.js             period returns, % / σ thresholds, pre-week forensics, summaries
+  js/market.js               Yahoo search/chart + Google News through the relay chain
+  js/news.js                 headline -> trigger classification, sector playbooks
+  js/demo.js                 synthetic data for ?demo=1
+  vendor/                    TradingView lightweight-charts (Apache-2.0)
+relay/worker.js              optional Cloudflare Worker relay
+tests/                       node:test unit tests
 ```
 
 ## Caveats
 
-- Yahoo Finance is unofficial and rate-limited. Responses are cached in memory for 1 hour (prices) and 24 hours (news).
-- Yahoo coverage of SME stocks and very old history can be patchy. Some SME counters only exist on one exchange.
+- Yahoo Finance is unofficial. Coverage of SME stocks and very old history can be patchy, and some SME counters only exist on one exchange.
+- BSE SME stocks can't be told apart from BSE main-board stocks by their Yahoo ticker, so they show as BSE.
 - Google News coverage before ~2010 and for small companies is thin. The trigger classification uses keyword rules, so treat it as a lead to read the headlines, not a verdict.
 - Not investment advice.

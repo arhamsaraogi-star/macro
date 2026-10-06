@@ -1,5 +1,7 @@
-/* macro — move forensics frontend (vanilla JS + lightweight-charts) */
-(() => {
+/* macro — move forensics frontend (vanilla JS + lightweight-charts), runs fully in the browser */
+import * as engine from "./engine.js";
+
+{
   const $ = (s, el = document) => el.querySelector(s);
   const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 
@@ -35,17 +37,11 @@
   };
   const label = (k) => state.data?.categoryLabels?.[k] || k;
 
-  async function api(path, params, signal) {
-    const url = `${path}?${new URLSearchParams(params)}`;
-    const res = await fetch(url, { signal });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(body.detail || `Request failed (${res.status})`);
-    return body;
-  }
+  const relayHelp = (msg) => /relay/.test(msg) ? `${esc(msg)}<br><br>Free public relays are rate-limited and sometimes down. <a href="#" class="open-settings">Set up your own free relay</a> (2 minutes) for reliable data.` : esc(msg);
 
   /* ---------- search ---------- */
   const q = $("#q"), dd = $("#dropdown"), goBtn = $("#goBtn");
-  let searchCtl, searchTimer, opts = [], active = -1;
+  let searchTimer, opts = [], active = -1;
 
   function renderDropdown(items, loading) {
     opts = items;
@@ -66,14 +62,12 @@
     goBtn.disabled = !v;
     if (v.length < 2) { dd.hidden = true; return; }
     searchTimer = setTimeout(async () => {
-      searchCtl?.abort();
-      searchCtl = new AbortController();
       renderDropdown([], true);
       try {
-        const { results } = await api("/api/search", { q: v }, searchCtl.signal);
+        const results = await engine.search(v);
         if (q.value.trim() === v) renderDropdown(results);
       } catch (e) {
-        if (e.name !== "AbortError") { dd.innerHTML = `<div class="opt-empty">${esc(e.message)}</div>`; }
+        if (q.value.trim() === v) dd.innerHTML = `<div class="opt-empty">${relayHelp(e.message)}</div>`;
       }
     }, 240);
   });
@@ -153,18 +147,19 @@
     goBtn.disabled = true; goBtn.classList.add("loading");
     status(`<span class="spinner"></span>Pulling price history for <b>${esc(sel.symbol)}</b> and scanning for moves…`);
     try {
-      const data = await api("/api/analyze", {
-        symbol: sel.symbol, mode: state.mode, daily: d, weekly: w, monthly: m,
-        years: $("#years").value, sigma_years: $("#sigmaYears").value,
+      const data = await engine.analyze({
+        symbol: sel.symbol, hint: sel, mode: state.mode,
+        thresholds: { daily: +d, weekly: +w, monthly: +m },
+        years: $("#years").value, sigmaYears: +$("#sigmaYears").value,
       });
       state.data = data;
       state.news = new Map();
       state.page = 0;
-      history.replaceState(null, "", `#${encodeURIComponent(data.symbol)}`);
+      history.replaceState(null, "", `${location.search}#${encodeURIComponent(data.symbol)}`);
       status("");
       render();
     } catch (e) {
-      status(esc(e.message), true);
+      status(relayHelp(e.message), true);
     } finally {
       goBtn.disabled = false; goBtn.classList.remove("loading");
     }
@@ -361,7 +356,7 @@
   async function loadNews(ev) {
     if (state.news.has(ev.id)) return state.news.get(ev.id);
     const info = state.data.info || {};
-    const n = await api("/api/news", {
+    const n = await engine.news({
       symbol: state.data.symbol, name: info.name || state.data.symbol, start: ev.start, end: ev.end,
       sector: info.sector || "", industry: info.industry || "",
     });
@@ -457,7 +452,7 @@
       $("#likely").innerHTML = n.likelyTrigger ? `likely: <b style="color:var(--ink)">${esc(label(n.likelyTrigger))}</b>` : "";
       renderTable();
     } catch (err) {
-      $("#newsBox").innerHTML = `<p class="muted">Couldn't load news: ${esc(err.message)}</p>`;
+      $("#newsBox").innerHTML = `<p class="muted">Couldn't load news: ${relayHelp(err.message)}</p>`;
     }
   }
 
@@ -511,8 +506,28 @@
       </div><div class="insight">${insight}</div>`;
   }
 
+  /* ---------- settings (own relay) ---------- */
+  const dlg = $("#settings");
+  function openSettings(e) {
+    e?.preventDefault();
+    $("#proxyUrl").value = engine.getCustomProxy();
+    $("#proxyMsg").textContent = "";
+    dlg.showModal();
+  }
+  $("#settingsBtn").addEventListener("click", openSettings);
+  document.addEventListener("click", (e) => { if (e.target.closest(".open-settings")) openSettings(e); });
+  $("#proxySave").addEventListener("click", (e) => {
+    e.preventDefault();
+    const v = $("#proxyUrl").value.trim();
+    if (v && !/^https:\/\/.+/.test(v)) { $("#proxyMsg").textContent = "Relay URL must start with https://"; return; }
+    engine.setCustomProxy(v);
+    dlg.close();
+    status(v ? "Using your relay. Search again to load data." : "Using the public relays.");
+  });
+  $("#proxyCancel").addEventListener("click", (e) => { e.preventDefault(); dlg.close(); });
+
   /* ---------- boot ---------- */
-  api("/api/health", {}).then((h) => ($("#demoBadge").hidden = !h.demo)).catch(() => {});
+  $("#demoBadge").hidden = !engine.isDemo;
   const fromHash = decodeURIComponent(location.hash.slice(1));
   if (fromHash) choose({ symbol: fromHash.toUpperCase(), name: fromHash.toUpperCase(), exchange: "", board: "", source: "direct" }, true);
-})();
+}

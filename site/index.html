@@ -9,8 +9,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Cdefs%3E%3ClinearGradient id=%27g%27 x1=%270%27 y1=%270%27 x2=%271%27 y2=%271%27%3E%3Cstop offset=%270%27 stop-color=%27%236c7cff%27/%3E%3Cstop offset=%271%27 stop-color=%27%2327e0c4%27/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width=%2732%27 height=%2732%27 rx=%279%27 fill=%27url(%23g)%27/%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="/static/styles.css" />
-  <script src="/static/vendor/lightweight-charts.standalone.production.js"></script>
+  <link rel="stylesheet" href="styles.css" />
+  <script src="vendor/lightweight-charts.standalone.production.js"></script>
 </head>
 <body>
   <!-- liquid backdrop -->
@@ -34,7 +34,12 @@
         <small>move forensics · NSE · BSE · SME</small>
       </div>
     </div>
-    <span id="demoBadge" class="chip warn" hidden>Demo data</span>
+    <div class="row">
+      <span id="demoBadge" class="chip warn" hidden>Demo data</span>
+      <button class="btn ghost icon-btn" id="settingsBtn" title="Data relay settings" aria-label="Settings">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+      </button>
+    </div>
   </header>
 
   <main>
@@ -203,7 +208,7 @@
     </section>
 
     <footer class="foot muted">
-      Data: Yahoo Finance (adjusted for splits/bonuses) · News: Google News search by date window. Not investment advice.
+      Data: Yahoo Finance (adjusted for splits/bonuses) · News: Google News search by date window · Runs entirely in your browser. Not investment advice.
     </footer>
   </main>
 
@@ -214,6 +219,22 @@
     <div id="drawerBody"></div>
   </aside>
 
-  <script src="/static/app.js"></script>
+  <dialog id="settings" class="glass dialog">
+    <form method="dialog">
+      <h2>Data relay</h2>
+      <p class="muted">Your browser can't call Yahoo Finance or Google News directly, so requests go through a relay. By default the site uses free public relays, which can be slow or rate-limited. For reliable data, deploy the free Cloudflare Worker in this repo (<code>relay/worker.js</code>, about 2 minutes, see the README) and paste its URL here.</p>
+      <label class="ctl" style="margin-top:14px"><span>Your relay URL</span>
+        <input id="proxyUrl" type="url" placeholder="https://macro-relay.yourname.workers.dev" style="width:100%" />
+      </label>
+      <p id="proxyMsg" class="neg" style="min-height:18px;font-size:13px"></p>
+      <div class="row" style="justify-content:flex-end">
+        <button class="btn ghost" id="proxyCancel">Cancel</button>
+        <button class="btn primary" id="proxySave">Save</button>
+      </div>
+      <p class="muted" style="font-size:12.5px;margin-top:14px">Saved only in this browser. Leave empty to use the public relays. Want to try without any network? <a href="?demo=1">Open demo mode</a>.</p>
+    </form>
+  </dialog>
+
+  <script type="module" src="js/app.js"></script>
 </body>
 </html>
