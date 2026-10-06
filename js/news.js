@@ -99,8 +99,26 @@ export function newsWindow(start, end) {
   return { from: addDays(start, -8), to: addDays(end, 3) };
 }
 
+const GENERIC_WORDS = new Set(["the", "india", "indian", "and", "of", "co", "company", "industries", "industry", "enterprises", "group", "holdings", "corporation", "international", "global", "systems", "solutions", "services", "technologies", "power", "energy", "finance", "financial", "bank", "infra", "projects", "products", "steel", "motors", "pharmaceuticals", "chemicals", "cement", "textiles"]);
+
+/**
+ * Does a headline actually mention the company? Google News date searches match loosely,
+ * so company headlines must contain the distinctive part of the name or the ticker.
+ */
+export function mentionsCompany(title, name, ticker = "") {
+  const t = ` ${title.toLowerCase().replace(/[^a-z0-9&]+/g, " ")} `;
+  const words = cleanCompanyName(name).toLowerCase().replace(/[^a-z0-9& ]+/g, " ").split(/\s+/).filter(Boolean);
+  if (ticker && ticker.length >= 3 && !/^\d+$/.test(ticker) && t.includes(` ${ticker.toLowerCase()} `)) return true;
+  if (!words.length) return false;
+  // Distinctive phrase: the first word, plus the next word(s) while the phrase is short or generic.
+  const phrase = [words[0]];
+  for (let i = 1; i < words.length && (phrase.join(" ").length < 5 || GENERIC_WORDS.has(phrase.at(-1))); i++) phrase.push(words[i]);
+  if (GENERIC_WORDS.has(words[0]) && phrase.length === 1 && words[1]) phrase.push(words[1]);
+  return t.includes(` ${phrase.join(" ")} `);
+}
+
 /** Score, dedupe and summarise raw headlines ({title,url,source,date}). */
-export function rankNews(raw, { start, sector = "", industry = "" }) {
+export function rankNews(raw, { start, sector = "", industry = "", name = "", ticker = "" }) {
   // items carry scope: "company" (default), "sector" or "market"
   const preferred = new Set(playbook(sector, industry));
   const seen = new Set();
@@ -108,6 +126,7 @@ export function rankNews(raw, { start, sector = "", industry = "" }) {
   for (const it of raw) {
     const key = it.title.toLowerCase().slice(0, 90);
     if (seen.has(key)) continue;
+    if ((it.scope || "company") === "company" && name && !mentionsCompany(it.title, name, ticker)) continue;
     seen.add(key);
     const cats = classify(it.title);
     let score = 1;
