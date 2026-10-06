@@ -439,9 +439,10 @@ import * as engine from "./engine.js";
     const n = await engine.news({
       symbol: state.data.symbol, name: info.name || state.data.symbol, start: ev.start, end: ev.end,
       sector: info.sector || "", industry: info.industry || "",
-      extra: withContext ? engine.contextQueries(ev, state.data) : [],
+      // One combined archive request covers company, sector and market headlines.
+      extra: engine.contextQueries(ev, state.data),
     });
-    n.full = withContext || !engine.contextQueries(ev, state.data).length;
+    n.full = true;
     state.news.set(ev.id, n);
     return n;
   }

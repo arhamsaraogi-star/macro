@@ -3,7 +3,7 @@
 // relay: a tiny Cloudflare Worker (relay/worker.js). The relay URL comes from, in order,
 // a ?relay= link (saved), the user's Settings (localStorage), or the site default in config.js.
 
-import { cleanCompanyName, newsWindow, rankNews } from "./news.js";
+import { cleanCompanyName, mentionsCompany, newsWindow, rankNews } from "./news.js";
 
 const PROXY_KEY = "macro.proxy";
 
@@ -397,8 +397,8 @@ async function gdeltNews(query, from, to, attempt = 0) {
     if (res.status === 429 || /limit requests/i.test(text)) throw new Error("rate");
     if (!res.ok) throw new Error(`GDELT HTTP ${res.status}`);
   } catch (e) {
-    if (attempt < 2 && (e.message === "rate" || /fetch failed|network|Failed to fetch/i.test(e.message))) {
-      gdeltNext = Math.max(gdeltNext, Date.now() + 6000 * (attempt + 1));
+    if (attempt < 3 && (e.message === "rate" || /fetch failed|network|Failed to fetch/i.test(e.message))) {
+      gdeltNext = Math.max(gdeltNext, Date.now() + 7000 * (attempt + 1));
       return gdeltNews(query, from, to, attempt + 1);
     }
     throw new Error(e.name === "AbortError" ? "GDELT timeout" : e.message === "rate" ? "GDELT busy" : `GDELT: ${e.message}`);
@@ -431,58 +431,40 @@ async function fromSources(googleQuery, gdeltQuery, from, to, errors) {
   return [...gdelt, ...g];
 }
 
-/** Company headlines for a move's window. */
-export function companyNews({ symbol, name, start, end }) {
-  const win = newsWindow(start, end);
-  // Company coverage clusters right around the move: search 4 days before to 2 days after.
-  const shift = (d, n) => { const x = new Date(d + "T00:00:00Z"); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
-  const near = { from: shift(start, -4), to: shift(end, 2) };
-  const clean = cleanCompanyName(name || symbol);
-  const base = symbol.split(".")[0].replace(/-S[MT]$/, "");
-  const phrase = `"${clean || base}"`;
-  return cached(`nc:${symbol}:${win.from}:${win.to}`, async () => {
-    const errors = [];
-    const raw = await fromSources(phrase, `${phrase} sourcelang:english`, near.from, near.to, errors);
-    return { win, raw, errors, base, link: googleNewsLink(phrase, win.from, win.to) };
-  });
-}
-
-/** Market / sector / commodity headlines for a move's window (one combined GDELT query). */
-export function contextNews({ start, end, extra }) {
-  const win = newsWindow(start, end);
-  if (!extra.length) return Promise.resolve({ raw: [], errors: [] });
-  return cached(`nx:${win.from}:${win.to}:${extra.map((x) => x.query).join("|")}`, async () => {
-    const errors = [];
-    const terms = extra.flatMap((x) => (x.scope === "market" ? ["sensex", "nifty"] : [`"${x.query}"`]));
-    const gq = `(${[...new Set(terms)].join(" OR ")}) sourcecountry:IN sourcelang:english`;
-    let raw = [];
-    if (googleOk()) {
-      const g = await Promise.all(extra.map(({ query, scope }) => googleNews(query, win.from, win.to)
-        .then((items) => items.slice(0, 6).map((it) => ({ ...it, scope })))
-        .catch((e) => { googleFailed(); errors.push(`Google News: ${e.message}`); return []; })));
-      raw = g.flat();
-    }
-    if (!raw.length && win.to >= GDELT_START) {
-      try {
-        const items = await gdeltNews(gq, win.from, win.to);
-        raw = items.slice(0, 25).map((it) => ({ ...it, scope: /sensex|nifty|dalal|market|fpi|fii|rbi|rupee/i.test(it.title) ? "market" : "sector" }));
-      } catch (e) { errors.push(e.message); }
-    }
-    return { raw, errors };
-  });
-}
+/**
+ * Headlines around a move with ONE archive request: the company name plus market / sector /
+ * commodity terms. Headlines naming the company are "company"; the rest are split into
+ * market or sector by their wording.
+ */
+const MARKET_WORDS = /sensex|nifty|dalal|stock market|markets? (live|today|crash|rally)|fpi|fii|rbi|rupee|global markets/i;
 
 /**
  * Headlines around a move. `extra` adds market / sector / commodity searches,
  * e.g. [{ query: "Sensex Nifty", scope: "market" }, { query: "crude oil price", scope: "sector" }].
  */
-export async function news({ symbol, name, start, end, sector = "", industry = "", extra = [] }) {
-  const co = await companyNews({ symbol, name, start, end });
-  const cx = await contextNews({ start, end, extra });
-  const errors = [...co.errors, ...cx.errors];
-  return {
-    window: co.win, link: co.link, errors,
-    archiveNote: co.win.to < GDELT_START ? "The free news archive (GDELT) starts in 2017 and Google News blocks the relay, so older moves may show no headlines here — use the Google News link." : "",
-    ...rankNews([...co.raw, ...cx.raw], { start, sector, industry, name: name || symbol, ticker: co.base }),
-  };
+export function news({ symbol, name, start, end, sector = "", industry = "", extra = [] }) {
+  const win = newsWindow(start, end);
+  const clean = cleanCompanyName(name || symbol);
+  const base = symbol.split(".")[0].replace(/-S[MT]$/, "");
+  const phrase = `"${clean || base}"`;
+  const shift = (d, n) => { const x = new Date(d + "T00:00:00Z"); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
+  // Coverage clusters right around the move: 4 days before to 2 days after.
+  const near = { from: shift(start, -4), to: shift(end, 2) };
+  const key = `n:${symbol}:${near.from}:${near.to}:${extra.map((x) => x.query).join("|")}`;
+  return cached(key, async () => {
+    const errors = [];
+    const terms = [phrase, ...new Set(extra.flatMap((x) => (x.scope === "market" ? ["sensex", "nifty"] : [`"${x.query}"`])))];
+    const gq = `${terms.length > 1 ? `(${terms.join(" OR ")})` : phrase} sourcelang:english`;
+    const raw = (await fromSources(phrase, gq, near.from, near.to, errors)).map((it) => {
+      if (it.via === "google") return it;
+      const scope = mentionsCompany(it.title, clean || base, base) ? "company" : MARKET_WORDS.test(it.title) ? "market" : "sector";
+      return { ...it, scope };
+    });
+    const ranked = rankNews(raw, { start, sector, industry, name: clean || symbol, ticker: base });
+    return {
+      window: near, link: googleNewsLink(phrase, near.from, near.to), errors,
+      archiveNote: near.to < GDELT_START ? "The free news archive (GDELT) starts in 2017 and Google News blocks the relay, so older moves may show no headlines here — use the Google News link." : "",
+      ...ranked,
+    };
+  });
 }
