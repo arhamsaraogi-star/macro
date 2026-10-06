@@ -167,12 +167,14 @@ export function triggerText(e, n, data) {
   if (e.driver === "market") return { key: "market_wide", text: [episode || "Market-wide move", themeTxt].filter(Boolean).join(" · ") };
   if (e.driver === "sector") return { key: "sector_wide", text: [`${data.sectorIndex?.name || "Sector"} ${word}`, themeTxt].filter(Boolean).join(" · ") };
   const company = n?.likelyTrigger ? labelOf(n.likelyTrigger) : "";
+  const earlierTxt = n?.earlierTrigger ? labelOf(n.earlierTrigger) : "";
   if (!n && !theme && !partial && !episode) return null;
-  // Fresh company news first; a theme that explains the move beats older company news.
-  const staleCompany = company && !n.likelyFresh;
-  const head = (staleCompany && themeTxt) || company || episode || themeTxt || (n ? "unclear" : "Stock-specific");
+  // Fresh company news first, then a matched episode, then an explaining theme; older company
+  // news is only mentioned as "earlier".
+  const staleCompany = !company && earlierTxt;
+  const head = company || episode || themeTxt || (n ? "unclear" : "Stock-specific");
   const extra = [
-    staleCompany && themeTxt ? `earlier: ${company}` : "",
+    staleCompany ? `earlier: ${earlierTxt}` : "",
     episode && head !== episode && company ? episode : "",
     themeTxt && head !== themeTxt ? themeTxt : "",
   ].filter(Boolean);

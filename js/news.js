@@ -177,20 +177,23 @@ export function rankNews(raw, { start, end = start, sector = "", industry = "", 
   for (const it of company) add(it, it.fresh ? 1 : 0.3);
   // Generic press releases / updates count like a headline; typed filings (results, management
   // change, rating, orders…) are the strongest evidence.
-  for (const it of filings) add(it, it.fresh ? (it.typed ? 3 : 1) : 0.3);
+  for (const it of filings) add(it, it.fresh ? (it.typed ? 3 : 0.5) : 0.3);
   // Market wraps that merely mention the company ("Sensex falls; X worst performer") are "macro":
   // let specific company triggers win whenever there are any.
   const pick = (c) => {
     const ranked = Object.entries(c).sort((a, b) => b[1] - a[1]);
     return (ranked.find(([k]) => k !== "macro") || ranked[0])?.[0] ?? null;
   };
-  const likely = pick(counts);
+  // Only fresh evidence with real weight names the trigger; older items are reported as "earlier".
+  const freshPick = pick(freshCounts);
+  const likely = freshPick && freshCounts[freshPick] >= 1 ? freshPick : null;
+  const earlier = !likely ? pick(counts) : null;
   const context = items.filter((it) => it.scope === "sector" || it.scope === "market").slice(0, 12);
   const buckets = {};
   for (const it of [...filings, ...company, ...context]) for (const b of it.buckets) buckets[b] = (buckets[b] || 0) + 1;
   return {
     items: [...filings.slice(0, 12), ...company.slice(0, 25), ...context],
     categoryCounts: Object.fromEntries(Object.entries(counts).map(([k, v]) => [k, Math.round(v * 10) / 10])),
-    likelyTrigger: likely, likelyFresh: !!likely && !!freshCounts[likely] && pick(freshCounts) === likely, bucketCounts: buckets,
+    likelyTrigger: likely, likelyFresh: !!likely, earlierTrigger: earlier, bucketCounts: buckets,
   };
 }
