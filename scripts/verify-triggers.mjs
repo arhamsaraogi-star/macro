@@ -4,6 +4,8 @@ import { readFileSync } from "node:fs";
 
 globalThis.window = globalThis;
 eval(readFileSync(new URL("../site/config.js", import.meta.url), "utf8"));
+if (process.env.RELAY) globalThis.MACRO_CONFIG.relay = process.env.RELAY;
+if (process.env.NEWS_RELAY) globalThis.MACRO_CONFIG.news = process.env.NEWS_RELAY;
 const engine = await import("../site/js/engine.js");
 
 const CASES = [
