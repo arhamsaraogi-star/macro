@@ -382,12 +382,14 @@ let gdeltNext = 0;
 async function gdeltNews(query, from, to, attempt = 0) {
   if (to < GDELT_START) return [];
   const wait = gdeltNext - Date.now();
-  gdeltNext = Math.max(Date.now(), gdeltNext) + 5200;
+  gdeltNext = Math.max(Date.now(), gdeltNext) + 5600;
   if (wait > 0) await new Promise((r) => setTimeout(r, wait));
   const dt = (d) => (d < GDELT_START ? GDELT_START : d).replaceAll("-", "") + "000000";
-  const url = `https://api.gdeltproject.org/api/v2/doc/doc?query=${encodeURIComponent(query)}&mode=ArtList&format=json&maxrecords=50&sort=DateAsc&startdatetime=${dt(from)}&enddatetime=${dt(to)}`;
+  // HybridRel ranks by relevance (with recency), so the event's own coverage isn't crowded out
+  // by whatever was published first in the window.
+  const url = `https://api.gdeltproject.org/api/v2/doc/doc?query=${encodeURIComponent(query)}&mode=ArtList&format=json&maxrecords=250&sort=HybridRel&startdatetime=${dt(from)}&enddatetime=${dt(to)}`;
   const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), 15000);
+  const timer = setTimeout(() => ctl.abort(), 20000);
   let text;
   try {
     const res = await fetch(url, { signal: ctl.signal });
@@ -395,14 +397,17 @@ async function gdeltNews(query, from, to, attempt = 0) {
     if (res.status === 429 || /limit requests/i.test(text)) throw new Error("rate");
     if (!res.ok) throw new Error(`GDELT HTTP ${res.status}`);
   } catch (e) {
-    if (e.message === "rate" && attempt === 0) return gdeltNews(query, from, to, 1);
-    throw new Error(e.name === "AbortError" ? "GDELT timeout" : e.message === "rate" ? "GDELT busy" : e.message);
+    if (attempt < 2 && (e.message === "rate" || /fetch failed|network|Failed to fetch/i.test(e.message))) {
+      gdeltNext = Math.max(gdeltNext, Date.now() + 6000 * (attempt + 1));
+      return gdeltNews(query, from, to, attempt + 1);
+    }
+    throw new Error(e.name === "AbortError" ? "GDELT timeout" : e.message === "rate" ? "GDELT busy" : `GDELT: ${e.message}`);
   } finally {
     clearTimeout(timer);
   }
   let body;
   try { body = JSON.parse(text); } catch { return []; }
-  const tidy = (t) => (t || "").replace(/\s+([,;:%?!.])/g, "$1").replace(/\s+'\s*/g, "'").replace(/\s{2,}/g, " ").trim();
+  const tidy = (t) => (t || "").replace(/\s+([,;:%?!.])/g, "$1").replace(/\s+'\s*/g, "'").replace(/(\d), (\d{3})/g, "$1,$2").replace(/\s{2,}/g, " ").trim();
   return (body.articles || []).map((a) => ({
     title: tidy(a.title), url: a.url, source: a.domain, via: "gdelt",
     date: a.seendate ? `${a.seendate.slice(0, 4)}-${a.seendate.slice(4, 6)}-${a.seendate.slice(6, 8)}` : null,
@@ -429,12 +434,15 @@ async function fromSources(googleQuery, gdeltQuery, from, to, errors) {
 /** Company headlines for a move's window. */
 export function companyNews({ symbol, name, start, end }) {
   const win = newsWindow(start, end);
+  // Company coverage clusters right around the move: search 4 days before to 2 days after.
+  const shift = (d, n) => { const x = new Date(d + "T00:00:00Z"); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
+  const near = { from: shift(start, -4), to: shift(end, 2) };
   const clean = cleanCompanyName(name || symbol);
   const base = symbol.split(".")[0].replace(/-S[MT]$/, "");
   const phrase = `"${clean || base}"`;
   return cached(`nc:${symbol}:${win.from}:${win.to}`, async () => {
     const errors = [];
-    const raw = await fromSources(phrase, `${phrase} sourcelang:english`, win.from, win.to, errors);
+    const raw = await fromSources(phrase, `${phrase} sourcelang:english`, near.from, near.to, errors);
     return { win, raw, errors, base, link: googleNewsLink(phrase, win.from, win.to) };
   });
 }
@@ -457,7 +465,7 @@ export function contextNews({ start, end, extra }) {
     if (!raw.length && win.to >= GDELT_START) {
       try {
         const items = await gdeltNews(gq, win.from, win.to);
-        raw = items.slice(0, 15).map((it) => ({ ...it, scope: /sensex|nifty|dalal|market|fpi|fii|rbi|rupee/i.test(it.title) ? "market" : "sector" }));
+        raw = items.slice(0, 25).map((it) => ({ ...it, scope: /sensex|nifty|dalal|market|fpi|fii|rbi|rupee/i.test(it.title) ? "market" : "sector" }));
       } catch (e) { errors.push(e.message); }
     }
     return { raw, errors };

@@ -58,6 +58,25 @@ export function periods(bars, frame, sigmaYears = 1) {
   return rows.slice(1);
 }
 
+/**
+ * Stock's beta to a factor over the ~250 sessions before bar index `s`, using the factor's
+ * change over each stock session (overseas factors include the previous calendar day).
+ */
+function factorBeta(bars, fs, s, overseas) {
+  if (!fs) return null;
+  const xs = [], ys = [];
+  for (let i = Math.max(1, s - 250); i < s; i++) {
+    const c = changeBetween(fs, bars[i - 1].t, bars[i].t, overseas);
+    if (!c || !(bars[i - 1].c > 0)) continue;
+    xs.push(c.change); ys.push(bars[i].c / bars[i - 1].c - 1);
+  }
+  if (xs.length < 60) return null;
+  const mx = mean(xs), my = mean(ys);
+  let cov = 0, vx = 0;
+  for (let i = 0; i < xs.length; i++) { cov += (xs[i] - mx) * (ys[i] - my); vx += (xs[i] - mx) ** 2; }
+  return vx > 0 ? cov / vx : null;
+}
+
 const series = (x) => (x?.bars?.length ? { ...x, series: makeSeries(x.bars) } : null);
 const sameWay = (x, ret) => !!x && x.change > 0 === ret > 0 && Math.abs(x.change) >= Math.abs(ret) * 0.5;
 
@@ -97,8 +116,14 @@ export function findEvents(bars, thresholds, { context = {}, mode = "percent", s
       const postRet = e + 1 < close.length ? close[Math.min(e + POST_DAYS, close.length - 1)] / close[e] - 1 : null;
 
       const prevDate = bars[s >= 1 ? s - 1 : s].t, endDate = bars[e].t;
-      const mkt = changeBetween(market?.series, prevDate, endDate);
-      const sec = changeBetween(sector?.series, prevDate, endDate);
+      // Remove the stock's own weight from its index (heavyweights move their own index).
+      const exSelf = (x, w) => {
+        if (!x || !w) return x;
+        const change = (x.change - w * p.ret) / (1 - w);
+        return { change, z: x.z != null && x.change ? (x.z * change) / x.change : x.z };
+      };
+      const mkt = exSelf(changeBetween(market?.series, prevDate, endDate), context.market?.selfWeight);
+      const sec = exSelf(changeBetween(sector?.series, prevDate, endDate), context.sector?.selfWeight);
       const benchRet = mkt ? mkt.change : null;
       const preSpan = preA >= 1 ? [bars[preA - 1].t, bars[preB - 1].t] : null;
       const mktPre = preSpan && changeBetween(market?.series, ...preSpan);
@@ -108,10 +133,16 @@ export function findEvents(bars, thresholds, { context = {}, mode = "percent", s
         if (!c) return null;
         const pc = preSpan && changeBetween(f.series, ...preSpan, f.overseas);
         const sens = f.sens || 0;
-        // Does this factor move explain the stock move, given the industry's sensitivity?
-        const explains = sens !== 0 && c.z != null && Math.abs(c.z) >= 1.5 && Math.sign(sens * c.change) === Math.sign(p.ret);
+        // How much of the move does this factor account for? beta (stock vs factor, trailing year)
+        // x the factor's move, as a share of the stock's move.
+        const beta = factorBeta(bars, f.series, s, f.overseas);
+        const share = beta != null ? (beta * c.change) / p.ret : null;
+        // It "explains" the move if it moved unusually, in the direction the industry's
+        // sensitivity predicts, and plausibly accounts for at least a fifth of the move.
+        const explains = sens !== 0 && c.z != null && Math.abs(c.z) >= 1.5 && Math.sign(sens * c.change) === Math.sign(p.ret)
+          && (share == null || share >= 0.2);
         return {
-          key: f.key, name: f.name, why: f.why, kind: f.kind, sens, change: round(c.change), z: round(c.z, 2),
+          key: f.key, name: f.name, why: f.why, kind: f.kind, sens, change: round(c.change), z: round(c.z, 2), beta: round(beta, 2), share: round(share, 2),
           preChange: round(pc?.change), notable: c.z != null && Math.abs(c.z) >= 2, explains,
         };
       }).filter(Boolean);
