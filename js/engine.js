@@ -162,7 +162,8 @@ export function triggerText(e, n, data) {
   const themeTxt = theme ? `${theme.name} ${pctTxt(theme.change)}` : "";
   const word = e.direction === "up" ? "rally" : "sell-off";
   const partial = e.alsoMoved?.length ? ` + ${e.alsoMoved.join(" & ")} ${word}` : "";
-  const episode = e.episodes?.find((x) => x.name !== "Union Budget")?.name || e.episodes?.[0]?.name || "";
+  // A Budget day is weak evidence for a single stock's move; only count it for market / sector moves.
+  const episode = e.episodes?.find((x) => x.name !== "Union Budget")?.name || (e.driver !== "stock" ? e.episodes?.[0]?.name : "") || "";
   if (e.driver === "market") return { key: "market_wide", text: [episode || "Market-wide move", themeTxt].filter(Boolean).join(" · ") };
   if (e.driver === "sector") return { key: "sector_wide", text: [`${data.sectorIndex?.name || "Sector"} ${word}`, themeTxt].filter(Boolean).join(" · ") };
   const company = n?.likelyTrigger ? labelOf(n.likelyTrigger) : "";

@@ -139,8 +139,11 @@ export function findEvents(bars, thresholds, { context = {}, mode = "percent", s
         const share = beta != null ? (beta * c.change) / p.ret : null;
         // It "explains" the move if it moved unusually, in the direction the industry's
         // sensitivity predicts, and plausibly accounts for at least a fifth of the move.
-        const explains = sens !== 0 && c.z != null && Math.abs(c.z) >= 1.5 && Math.sign(sens * c.change) === Math.sign(p.ret)
-          && (share == null || share >= 0.2);
+        // Or: a ≥1.8σ theme / macro move while the stock's own sector also moved ≥2σ the same way
+        // (theme-driven sector move; the stock can overreact relative to its usual beta).
+        const sectorCoMove = !!sec && sec.z != null && Math.abs(sec.z) >= 2 && sec.change > 0 === p.ret > 0;
+        const sameWay = sens !== 0 && c.z != null && Math.sign(sens * c.change) === Math.sign(p.ret);
+        const explains = sameWay && Math.abs(c.z) >= 1.5 && (share == null || share >= 0.2 || (Math.abs(c.z) >= 1.8 && sectorCoMove));
         return {
           key: f.key, name: f.name, why: f.why, kind: f.kind, sens, change: round(c.change), z: round(c.z, 2), beta: round(beta, 2), share: round(share, 2),
           preChange: round(pc?.change), notable: c.z != null && Math.abs(c.z) >= 2, explains,

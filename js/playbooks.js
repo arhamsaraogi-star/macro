@@ -240,7 +240,7 @@ export const PLAYBOOKS = {
     ["China+1, PLI incentives", "Smartphone exports, import substitution", "Semiconductor upcycle, AI demand"],
     ["PLI reduction, customer concentration", "Component shortages", "Global electronics slowdown, export controls"],
     ["Order book", "Exports", "Margins"], "electronics manufacturing PLI", { peers: ["DIXON.NS", "AMBER.NS", "KAYNES.NS", "SYRMA.NS"] }),
-  internet: P("Internet / platforms / fintech", /internet|fintech|payments|online/i, { rates: -1, smallcap: 1 },
+  internet: P("Internet / platforms / fintech", /internet|fintech|payments|online|paytm|one 97|pb fintech|zomato|eternal|nykaa|fsn e-commerce|swiggy/i, { rates: -1, smallcap: 1 },
     ["GMV & take-rate growth, ad revenue", "Path to profitability", "Lower CAC, monetisation"],
     ["Cash burn, discounting, competition", "Regulatory intervention (RBI / payments)", "Higher rates hit long-duration valuations"],
     ["GMV", "Take rate", "Contribution margin"], "internet stocks", { peers: ["NAUKRI.NS", "INDIAMART.NS", "JUSTDIAL.NS", "PAYTM.NS", "POLICYBZR.NS"] }),
@@ -267,7 +267,7 @@ const GENERIC = P("General", /.^/, {},
 export function playbookFor(sector = "", industry = "", name = "") {
   const texts = [name, industry, sector].map((t) => (t || "").toLowerCase());
   // Name-specific playbooks (paints, railways, jewellery, microfinance…) win over generic industry ones.
-  const nameFirst = ["paints", "railways", "jewellery", "microfinance", "batteries", "sugar", "aluminium"];
+  const nameFirst = ["paints", "railways", "jewellery", "microfinance", "batteries", "sugar", "aluminium", "internet"];
   for (const k of nameFirst) if (PLAYBOOKS[k].match.test(texts[0])) return { key: k, ...PLAYBOOKS[k] };
   for (const t of texts.slice(1)) {
     if (!t) continue;
