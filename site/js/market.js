@@ -24,6 +24,19 @@ export function relayUrl() {
 }
 
 export class RelayError extends Error {}
+export class RelayOutdatedError extends Error {}
+
+let versionPromise = null;
+/** Relay code version (1 = original, 2 = adds NSE history for SME stocks). */
+export function relayVersion() {
+  const relay = relayUrl();
+  if (!relay) return Promise.resolve(0);
+  versionPromise ||= fetch(`${relay.replace(/\/+$/, "")}/`)
+    .then((r) => r.text())
+    .then((t) => { try { return JSON.parse(t).version || 1; } catch { return 1; } })
+    .catch(() => 1);
+  return versionPromise;
+}
 export class NeedsRelayError extends RelayError {}
 
 // Free relays rate-limit bursts, so keep at most a few requests in flight.
@@ -224,9 +237,82 @@ export function history(symbol) {
   });
 }
 
+/* ---------- NSE history (SME stocks: Yahoo has no history for them) ---------- */
+
+const MON = { Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06", Jul: "07", Aug: "08", Sep: "09", Oct: "10", Nov: "11", Dec: "12" };
+const nseDate = (s) => { const [d, m, y] = s.split("-"); return `${y}-${MON[m]}-${d.padStart(2, "0")}`; };
+const ddmmyyyy = (d) => `${String(d.getUTCDate()).padStart(2, "0")}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${d.getUTCFullYear()}`;
+
+/**
+ * NSE rows -> adjusted daily bars. NSE prices are unadjusted, but on an ex-date NSE reports
+ * the *adjusted* previous close, so prevClose / yesterday's close gives the bonus/split factor.
+ */
+export function parseNseHistory(rows) {
+  const SERIES_RANK = { EQ: 0, SM: 0, ST: 0, BE: 1, BZ: 2 };
+  const byDate = new Map();
+  for (const r of rows) {
+    const c = +r.CH_CLOSING_PRICE;
+    if (!(c > 0) || !r.mTIMESTAMP) continue;
+    const t = nseDate(r.mTIMESTAMP);
+    const rank = SERIES_RANK[r.CH_SERIES] ?? 3;
+    const prev = byDate.get(t);
+    if (prev && prev.rank <= rank) continue;
+    byDate.set(t, {
+      t, rank, o: +r.CH_OPENING_PRICE || c, h: +r.CH_TRADE_HIGH_PRICE || c, l: +r.CH_TRADE_LOW_PRICE || c, c,
+      v: +r.CH_TOT_TRADED_QTY || 0, pc: +r.CH_PREVIOUS_CLS_PRICE || 0, dq: +r.COP_DELIV_QTY || 0,
+    });
+  }
+  const bars = [...byDate.values()].sort((a, b) => a.t.localeCompare(b.t));
+  // Corporate-action factors, applied backwards.
+  let f = 1;
+  for (let i = bars.length - 1; i >= 0; i--) {
+    const b = bars[i];
+    const adj = { t: b.t, o: b.o * f, h: b.h * f, l: b.l * f, c: b.c * f, v: f ? b.v / f : b.v, dq: f ? b.dq / f : b.dq };
+    if (i > 0 && b.pc > 0 && bars[i - 1].c > 0) {
+      const ratio = b.pc / bars[i - 1].c;
+      if (ratio < 0.97 || ratio > 1.5) f *= ratio; // bonus / split (or consolidation); dividends are < 3%
+    }
+    bars[i] = adj;
+  }
+  return bars;
+}
+
+async function nseHistory(base) {
+  const rows = [];
+  const end = new Date();
+  for (let y = 0; y < 15; y++) {
+    const to = new Date(end); to.setUTCFullYear(end.getUTCFullYear() - y);
+    const from = new Date(to); from.setUTCFullYear(to.getUTCFullYear() - 1); from.setUTCDate(from.getUTCDate() + 1);
+    const url = `https://www.nseindia.com/api/historicalOR/generateSecurityWiseHistoricalData?from=${ddmmyyyy(from)}&to=${ddmmyyyy(to)}&symbol=${encodeURIComponent(base)}&type=priceVolumeDeliverable&series=ALL`;
+    let body;
+    try { body = await relayFetch(url); } catch (e) { if (y === 0) throw e; break; }
+    const data = body?.data || [];
+    if (!data.length) { if (y === 0) continue; break; } // stop at the listing date
+    rows.push(...data);
+  }
+  return parseNseHistory(rows);
+}
+
+export function smeHistory(symbol) {
+  const base = symbol.toUpperCase().replace(/(-SM|-ST)?\.NS$/, "");
+  return cached(`sme:${base}`, async () => {
+    if ((await relayVersion()) < 2) {
+      throw new RelayOutdatedError("SME price history comes from NSE and needs the updated relay code (one-time re-paste).");
+    }
+    return { bars: await nseHistory(base), meta: { source: "NSE" } };
+  });
+}
+
+const isSme = (symbol, board) => board === "SME" || /-(SM|ST)\.NS$/i.test(symbol);
+
 /** History for a symbol, trying NSE / BSE / SME suffixes when none was given. */
-export async function resolve(symbol, alt = "") {
+export async function resolve(symbol, alt = "", board = "") {
   symbol = symbol.trim().toUpperCase();
+  if (isSme(symbol, board)) {
+    const sym = /\.NS$/.test(symbol) ? symbol : `${symbol}-SM.NS`;
+    const h = await smeHistory(sym);
+    if (h.bars.length > 5) return { symbol: sym, ...h };
+  }
   let cands = symbol.endsWith(".NS") || symbol.endsWith(".BO") || symbol.startsWith("^") ? [symbol] : directCandidates(symbol);
   if (symbol.endsWith("-SM.NS")) cands = [symbol, symbol.replace("-SM.NS", "-ST.NS"), symbol.replace("-SM.NS", ".NS")];
   if (alt) cands.push(alt.toUpperCase());
@@ -272,6 +358,26 @@ async function googleNews(query, from, to) {
  * Headlines around a move. `extra` adds market / sector / commodity searches,
  * e.g. [{ query: "Sensex Nifty", scope: "market" }, { query: "crude oil price", scope: "sector" }].
  */
+// GDELT (2017+) allows browser requests directly; it asks for at most one request per 5 s.
+let gdeltNext = 0;
+async function gdeltNews(query, from, to) {
+  if (from < "2017-01-01") return [];
+  const wait = gdeltNext - Date.now();
+  gdeltNext = Math.max(Date.now(), gdeltNext) + 5200;
+  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+  const dt = (d) => d.replaceAll("-", "") + "000000";
+  const url = `https://api.gdeltproject.org/api/v2/doc/doc?query=${encodeURIComponent(query)}&mode=ArtList&format=json&maxrecords=40&sort=DateAsc&startdatetime=${dt(from)}&enddatetime=${dt(to)}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`GDELT HTTP ${res.status}`);
+  const text = await res.text();
+  let body;
+  try { body = JSON.parse(text); } catch { throw new Error("GDELT rate limit"); }
+  return (body.articles || []).map((a) => ({
+    title: a.title, url: a.url, source: a.domain,
+    date: a.seendate ? `${a.seendate.slice(0, 4)}-${a.seendate.slice(4, 6)}-${a.seendate.slice(6, 8)}` : null,
+  }));
+}
+
 export function news({ symbol, name, start, end, sector = "", industry = "", extra = [] }) {
   const win = newsWindow(start, end);
   const clean = cleanCompanyName(name || symbol);
@@ -283,6 +389,10 @@ export function news({ symbol, name, start, end, sector = "", industry = "", ext
     for (const q of queries) {
       try { raw.push(...(await googleNews(q, win.from, win.to))); } catch (e) { errors.push(e.message); }
       if (raw.length >= 8) break;
+    }
+    // Google failed or throttled: fall back to GDELT for company news.
+    if (!raw.length && queries.length) {
+      try { raw.push(...(await gdeltNews(queries[0], win.from, win.to))); } catch (e) { errors.push(e.message); }
     }
     const ctx = await Promise.all(extra.map(({ query, scope }) =>
       googleNews(query, win.from, win.to).then((items) => items.slice(0, 6).map((it) => ({ ...it, scope }))).catch((e) => { errors.push(e.message); return []; })));

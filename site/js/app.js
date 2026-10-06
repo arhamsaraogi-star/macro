@@ -55,11 +55,17 @@ import * as engine from "./engine.js";
 
   function relayHelp(msg) {
     if (/No data relay/.test(msg)) { showRelaySetup(true); return `Connect a data relay first (one-time, ~2 minutes) — see the steps above.`; }
+    if (/updated relay code/.test(msg)) {
+      showRelaySetup(true, true);
+      return `${esc(msg)} Open the relay code link above, copy it, and in Cloudflare: your worker → Edit code → paste → Deploy. No other change needed.`;
+    }
     return /relay/.test(msg) ? `${esc(msg)} <a href="#" class="open-settings">Check relay settings</a>.` : esc(msg);
   }
-  function showRelaySetup(scroll) {
+  function showRelaySetup(scroll, update) {
     const el = $("#relaySetup");
     el.hidden = false;
+    el.classList.toggle("update", !!update);
+    $("#relaySetup h2").textContent = update ? "One-time update: re-paste the relay code" : "One-time setup: connect a free data relay";
     if (scroll) el.scrollIntoView({ behavior: "smooth", block: "center" });
   }
 

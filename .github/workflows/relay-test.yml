@@ -41,6 +41,9 @@ jobs:
           check "https://query1.finance.yahoo.com/v1/finance/search?q=td%20power&quotesCount=10&newsCount=0&listsCount=0&enableFuzzyQuery=true"
           check "https://news.google.com/rss/search?q=%22TD%20Power%20Systems%22%20after%3A2024-01-01%20before%3A2024-02-15&hl=en-IN&gl=IN&ceid=IN:en"
           grep -o '<title>[^<]*</title>' /tmp/b | head -5
+          check "https://www.nseindia.com/api/historicalOR/generateSecurityWiseHistoricalData?from=01-01-2024&to=31-12-2024&symbol=KRISHCA&type=priceVolumeDeliverable&series=ALL"
+          node -e 'const d=JSON.parse(require("fs").readFileSync("/tmp/b","utf8")).data;console.log("NSE rows:",d.length,d[0]?.mTIMESTAMP,d.at(-1)?.mTIMESTAMP)'
+          echo "=== blocked path check (expect 403)"; curl -s -o /dev/null -w '%{http_code}\n' "${R}$(enc 'https://www.nseindia.com/api/quote-equity?symbol=TCS')"
           echo "=== blocked host check"; curl -s -o /dev/null -w '%{http_code}\n' "${R}https%3A%2F%2Fexample.com%2F"
       - name: Sector index / factor symbols
         run: |

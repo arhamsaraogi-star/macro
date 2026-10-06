@@ -47,7 +47,7 @@ Yahoo Finance and Google News don't allow requests from other websites, and the 
 2. Click **Edit code**, replace everything with [`relay/worker.js`](relay/worker.js), and click **Deploy**.
 3. Copy the `https://macro-relay.<you>.workers.dev` URL and paste it into the site's setup box or **Settings** (gear icon).
 
-The worker only forwards to Yahoo Finance and Google News, caches responses for an hour, and stays within the free tier (100k requests a day). To make the site work for **every** visitor, put the URL in `site/config.js` (`relay: "https://…"`). To share a ready-to-use link instead, use `https://arhamsaraogi-star.github.io/macro/?relay=<url>`.
+The worker only forwards to Yahoo Finance, Google News and NSE's price-history API (used for NSE SME stocks, which Yahoo has no history for), caches responses for an hour, and stays within the free tier (100k requests a day). To make the site work for **every** visitor, put the URL in `site/config.js` (`relay: "https://…"`). To share a ready-to-use link instead, use `https://arhamsaraogi-star.github.io/macro/?relay=<url>`.
 
 `.github/workflows/relay-test.yml` runs the worker locally in CI and fetches real Yahoo and Google News data through it.
 
@@ -85,6 +85,8 @@ tests/                       node:test unit tests
 - Yahoo Finance is unofficial. Coverage of SME stocks and very old history can be patchy, and some SME counters only exist on one exchange.
 - Yahoo has no daily history for most NIFTY sector indices, so those sectors use a basket of 3–5 listed leaders as a proxy.
 - Rates sensitivity uses the US 10-year yield (Yahoo has no Indian G-sec series). Indian rate events are covered through the episode calendar (RBI surprises) and rate headlines.
+- SME prices come from NSE's own history API through the relay. NSE prices are unadjusted, so bonuses and splits are adjusted using NSE's adjusted previous close on each ex-date.
+- When Google News throttles the relay, company news falls back to GDELT (2017 onwards, at most one request every 5 seconds).
 - Google News coverage before ~2010 and for small companies is thin. The trigger classification uses keyword rules, so treat it as a lead to read the headlines, not a verdict.
 - The market-wide label is mechanical. For heavyweight index stocks (e.g. Reliance, HDFC Bank), the stock itself moves the index, so a "market-wide" label there can be partly self-caused.
 - The episode calendar is hand-curated and won't cover every event. Add to `EPISODES` in `site/js/context.js`.

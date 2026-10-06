@@ -39,15 +39,12 @@ jobs:
           check "TD Power BSE" "https://query1.finance.yahoo.com/v8/finance/chart/TDPOWERSYS.BO?period1=0&period2=$NOW&interval=1d"
           check "NIFTY 50" "https://query1.finance.yahoo.com/v8/finance/chart/%5ENSEI?period1=0&period2=$NOW&interval=1d"
           check "SME stock" "https://query1.finance.yahoo.com/v8/finance/chart/KRISHCA-SM.NS?period1=0&period2=$NOW&interval=1d"
-          for q in "range=max" "range=10y" "range=5y" "range=2y" "period1=1609459200&period2=$NOW"; do
-            check "SME KRISHCA-SM [$q]" "https://query1.finance.yahoo.com/v8/finance/chart/KRISHCA-SM.NS?$q&interval=1d"
-          done
-          check "SME HIMALAYAN-ST [range=max]" "https://query1.finance.yahoo.com/v8/finance/chart/HIMALAYAN-ST.NS?range=max&interval=1d"
-          check "SME search" "https://query1.finance.yahoo.com/v1/finance/search?q=sme%20emerge&quotesCount=20&newsCount=0"
-          check "TD Power [range=max]" "https://query1.finance.yahoo.com/v8/finance/chart/TDPOWERSYS.NS?range=max&interval=1d"
           check "Brent" "https://query1.finance.yahoo.com/v8/finance/chart/BZ%3DF?period1=0&period2=$NOW&interval=1d"
           check "M&M (peer)" "https://query1.finance.yahoo.com/v8/finance/chart/M%26M.NS?period1=0&period2=$NOW&interval=1d"
           check "Yahoo search" "https://query1.finance.yahoo.com/v1/finance/search?q=TDPOWERSYS.NS&quotesCount=20&newsCount=0&listsCount=0&enableFuzzyQuery=true"
           check "Google News" "https://news.google.com/rss/search?q=%22TD%20Power%20Systems%22%20after%3A2024-01-01%20before%3A2024-03-01&hl=en-IN&gl=IN&ceid=IN:en"
           code=$(curl -s -o /dev/null -w '%{http_code}' "$RELAY/?url=https%3A%2F%2Fexample.com%2F"); echo "blocked host -> HTTP $code (expect 403)"
+          echo "relay version: $(curl -s "$RELAY/")"
+          # NSE history (SME stocks) needs relay v2; report it without failing the job until the relay is updated.
+          f=$fail; check "NSE SME history (relay v2)" "https://www.nseindia.com/api/historicalOR/generateSecurityWiseHistoricalData?from=01-01-2024&to=31-12-2024&symbol=KRISHCA&type=priceVolumeDeliverable&series=ALL"; fail=$f
           exit $fail

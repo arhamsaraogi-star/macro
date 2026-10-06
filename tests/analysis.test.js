@@ -213,3 +213,24 @@ test("company headline relevance filter", () => {
     { start: "2024-01-02", name: "TD Power Systems Limited", ticker: "TDPOWERSYS" });
   assert.equal(r.items.length, 1);
 });
+
+import { parseNseHistory } from "../site/js/market.js";
+
+test("NSE SME history: dedupe series and adjust for a 1:1 bonus", () => {
+  const row = (d, close, prev, qty, series = "SM") => ({ mTIMESTAMP: d, CH_SERIES: series, CH_CLOSING_PRICE: close, CH_OPENING_PRICE: close,
+    CH_TRADE_HIGH_PRICE: close, CH_TRADE_LOW_PRICE: close, CH_PREVIOUS_CLS_PRICE: prev, CH_TOT_TRADED_QTY: qty, COP_DELIV_QTY: qty / 2 });
+  const bars = parseNseHistory([
+    row("03-Jan-2024", 210, 100, 1000),   // ex-bonus: NSE's adjusted prev close is 100 (yesterday 200)
+    row("01-Jan-2024", 196, 190, 500),
+    row("02-Jan-2024", 200, 196, 600),
+    row("02-Jan-2024", 199, 196, 50, "BE"), // duplicate date in another series: ignored
+  ]);
+  assert.deepEqual(bars.map((b) => b.t), ["2024-01-01", "2024-01-02", "2024-01-03"]);
+  assert.equal(bars[2].c, 210);
+  assert.equal(bars[1].c, 100); // 200 adjusted for the 1:1 bonus
+  assert.equal(bars[0].c, 98);
+  assert.equal(bars[1].v, 1200); // volume scaled up by the same factor
+  // a small dividend-sized gap is not treated as a corporate action
+  const div = parseNseHistory([row("01-Jan-2024", 100, 99, 10), row("02-Jan-2024", 99, 98.5, 10)]);
+  assert.equal(div[0].c, 100);
+});
