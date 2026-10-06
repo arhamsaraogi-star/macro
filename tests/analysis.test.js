@@ -174,7 +174,9 @@ test("local ticker search", () => {
   assert.equal(matchTickers(rows, "TATAPOWER")[0].s, "TATAPOWER");
   assert.equal(matchTickers(rows, "533553")[0].x, "BSE");
   assert.equal(yahooSymbol(hits[0]), "TDPOWERSYS.NS");
-  assert.equal(yahooSymbol(hits[1]), "533553.BO");
+  assert.equal(yahooSymbol(hits[1]), "TDPOWERSYS.BO");
+  assert.equal(yahooSymbol({ s: "500325", x: "BSE" }), "500325.BO");
+  assert.equal(yahooSymbol(matchTickers(rows, "krishca")[0]), "KRISHCA-SM.NS");
   assert.equal(matchTickers(rows, "krishca")[0].b, "SME");
 });
 

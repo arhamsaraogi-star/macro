@@ -68,9 +68,16 @@ async function bse() {
 }
 
 const [n, b] = await Promise.allSettled([nse(), bse()]);
-const rows = [...(n.value || []), ...(b.value || [])];
+// BSE's SME query can return the main list again: keep one row per exchange + code.
+const seen = new Set();
+const rows = [...(n.value || []), ...(b.value || [])].filter((r) => {
+  const k = `${r.x}:${r.s}`;
+  if (seen.has(k)) return false;
+  seen.add(k);
+  return true;
+});
 if (n.status === "rejected") console.warn("NSE list failed:", n.reason?.message);
-console.log(`NSE ${n.value?.length ?? 0}, BSE ${b.value?.length ?? 0}`);
+console.log(`NSE ${n.value?.length ?? 0}, BSE ${b.value?.length ?? 0} (raw), ${rows.length} unique`);
 
 if (rows.length < 1000) {
   try {
