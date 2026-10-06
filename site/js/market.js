@@ -277,18 +277,29 @@ export function parseNseHistory(rows) {
   return bars;
 }
 
+// NSE's history API returns at most ~70 rows per request, so ask for 90-day windows
+// (~62 sessions), a few at a time, walking back until the listing date.
+const NSE_WINDOW_DAYS = 90;
 async function nseHistory(base) {
   const rows = [];
+  const windows = [];
   const end = new Date();
-  for (let y = 0; y < 15; y++) {
-    const to = new Date(end); to.setUTCFullYear(end.getUTCFullYear() - y);
-    const from = new Date(to); from.setUTCFullYear(to.getUTCFullYear() - 1); from.setUTCDate(from.getUTCDate() + 1);
-    const url = `https://www.nseindia.com/api/historicalOR/generateSecurityWiseHistoricalData?from=${ddmmyyyy(from)}&to=${ddmmyyyy(to)}&symbol=${encodeURIComponent(base)}&type=priceVolumeDeliverable&series=ALL`;
-    let body;
-    try { body = await relayFetch(url); } catch (e) { if (y === 0) throw e; break; }
-    const data = body?.data || [];
-    if (!data.length) { if (y === 0) continue; break; } // stop at the listing date
-    rows.push(...data);
+  for (let k = 0; k < 15 * 4; k++) {
+    const to = new Date(end.getTime() - k * NSE_WINDOW_DAYS * 864e5);
+    const from = new Date(to.getTime() - (NSE_WINDOW_DAYS - 1) * 864e5);
+    windows.push([from, to]);
+  }
+  let emptyRun = 0;
+  for (let b = 0; b < windows.length && emptyRun < 2; b += 4) {
+    const batch = windows.slice(b, b + 4);
+    const results = await Promise.all(batch.map(([from, to], n) => {
+      const url = `https://www.nseindia.com/api/historicalOR/generateSecurityWiseHistoricalData?from=${ddmmyyyy(from)}&to=${ddmmyyyy(to)}&symbol=${encodeURIComponent(base)}&type=priceVolumeDeliverable&series=ALL`;
+      return relayFetch(url).then((body) => body?.data || []).catch((e) => { if (b === 0 && n === 0) throw e; return []; });
+    }));
+    for (const data of results) {
+      if (data.length) { rows.push(...data); emptyRun = 0; } else if (rows.length) emptyRun++;
+    }
+    if (!rows.length && b >= 8) break; // nothing in the last ~2 years: not an NSE listing
   }
   return parseNseHistory(rows);
 }
