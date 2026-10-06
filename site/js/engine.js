@@ -1,9 +1,10 @@
 // The app's data API: same shapes the UI renders, computed entirely in the browser.
 import { analyzeBars } from "./analysis.js";
-import { FACTORS, factorsFor, sectorIndexFor } from "./context.js";
+import { FACTORS, factorsFor, makeSeries, sectorIndexFor } from "./context.js";
+import { BUCKETS, MACRO_TRIGGERS, TIERS, playbookFor } from "./playbooks.js";
 import * as demo from "./demo.js";
 import * as market from "./market.js";
-import { CATEGORY_LABELS, cleanCompanyName, newsWindow, playbook, rankNews } from "./news.js";
+import { CATEGORY_LABELS, cleanCompanyName, newsWindow, rankNews } from "./news.js";
 
 export const isDemo = demo.enabled();
 
@@ -29,7 +30,8 @@ export async function analyze({ symbol, hint = {}, mode, thresholds, years, sigm
   // Context series: broad market, the stock's sector index, and sector-relevant commodities / macro.
   const [benchSym, benchName] = market.benchmarkFor(hist.symbol);
   const sectorIdx = sectorIndexFor(meta.sector, meta.industry);
-  const factorDefs = factorsFor(meta.sector, meta.industry);
+  const book = playbookFor(meta.sector, meta.industry, meta.name);
+  const factorDefs = factorsFor(book);
   const load = async (sym) => {
     try {
       const h = isDemo ? demo.history(sym) : await market.history(sym);
@@ -46,6 +48,7 @@ export async function analyze({ symbol, hint = {}, mode, thresholds, years, sigm
   };
 
   const ex = market.exchangeOf(hist.symbol);
+  if (hint.symbol?.toUpperCase() === hist.symbol && hint.board) ex.board = hint.board;
   return {
     symbol: hist.symbol,
     requested: symbol,
@@ -55,7 +58,10 @@ export async function analyze({ symbol, hint = {}, mode, thresholds, years, sigm
     benchmark: { symbol: benchSym, name: benchName, available: !!bench },
     sectorIndex: sectorIdx && { ...sectorIdx, available: !!sectorBars },
     factorsTracked: factorDefs.map((f, i) => ({ key: f.key, name: f.name, why: f.why, symbol: f.symbol, available: !!factorBars[i] })),
-    playbook: playbook(meta.sector, meta.industry).map((k) => ({ key: k, label: CATEGORY_LABELS[k] })),
+    industry: { key: book.key, name: book.name, rally: book.rally, selloff: book.selloff, metrics: book.metrics, newsQuery: book.newsQuery },
+    triggerMatrix: triggerMatrix(factorDefs, factorBars, bench, sectorBars, sectorIdx, benchName),
+    buckets: Object.fromEntries(Object.entries(BUCKETS).map(([k, b]) => [k, { label: b.label, tier: TIERS[b.tier] }])),
+    macroTriggers: MACRO_TRIGGERS,
     params: { mode, thresholds, years, sigmaYears },
     categoryLabels: CATEGORY_LABELS,
     demo: isDemo,
@@ -63,13 +69,39 @@ export async function analyze({ symbol, hint = {}, mode, thresholds, years, sigm
   };
 }
 
+/**
+ * Current trigger matrix: how each tracked factor moved over the last ~3 months and whether
+ * that is a tailwind or headwind for this industry (using the playbook's sensitivities).
+ */
+function triggerMatrix(defs, factorBars, bench, sectorBars, sectorIdx, benchName) {
+  const N = 63;
+  const row = (name, bars, sens, why) => {
+    if (!bars || bars.length < N + 2) return null;
+    const s = makeSeries(bars), i1 = bars.length - 1, i0 = i1 - N;
+    const change = bars[i1].c / bars[i0].c - 1;
+    const sd = s.sigmaAt(i0);
+    const z = sd ? Math.log(1 + change) / (sd * Math.sqrt(N)) : null;
+    const strong = z != null && Math.abs(z) >= 0.5;
+    const status = !sens ? "context" : !strong ? "neutral" : Math.sign(sens * change) > 0 ? "tailwind" : "headwind";
+    return { name, change: Math.round(change * 1e4) / 1e4, z: z == null ? null : Math.round(z * 100) / 100, sens, why, status, asOf: bars[i1].t };
+  };
+  return [
+    row(benchName, bench, 0, "broad market"),
+    sectorIdx && row(sectorIdx.name, sectorBars, 0, "sector index"),
+    ...defs.map((f, i) => row(f.name, factorBars[i], f.sens, f.why)),
+  ].filter(Boolean);
+}
+
 /** Market / sector / commodity searches worth running for this event. */
 export function contextQueries(ev, data) {
   const out = [];
   if (ev.driver === "market" || ev.episodes?.length || Math.abs(ev.benchmarkZ ?? 0) >= 2) out.push({ query: "Sensex Nifty", scope: "market" });
-  if (data.sectorIndex && (ev.driver === "sector" || Math.abs(ev.sectorZ ?? 0) >= 2)) out.push({ query: data.sectorIndex.query, scope: "sector" });
+  if (ev.driver === "sector" || Math.abs(ev.sectorZ ?? 0) >= 2) {
+    const q = data.industry?.newsQuery || data.sectorIndex?.query;
+    if (q) out.push({ query: q, scope: "sector" });
+  }
   for (const f of ev.factors || []) {
-    if (f.notable && f.kind === "factor" && out.length < 4) out.push({ query: factorQuery(f.key), scope: "sector" });
+    if ((f.notable || f.explains) && f.kind === "factor" && out.length < 4) out.push({ query: factorQuery(f.key), scope: "sector" });
   }
   return out;
 }
@@ -87,4 +119,4 @@ export async function news({ symbol, name, start, end, sector, industry, extra =
   return market.news({ symbol, name, start, end, sector, industry, extra });
 }
 
-export const { getCustomProxy, setCustomProxy } = market;
+export const { getCustomProxy, setCustomProxy, relayUrl } = market;

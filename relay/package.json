@@ -1,0 +1,6 @@
+{
+  "name": "macro-relay",
+  "private": true,
+  "scripts": { "deploy": "wrangler deploy" },
+  "devDependencies": { "wrangler": "^3.80.0" }
+}

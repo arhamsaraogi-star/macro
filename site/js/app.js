@@ -31,6 +31,7 @@ import * as engine from "./engine.js";
   const compact = (x) => (x == null ? "—" : Intl.NumberFormat("en-IN", { notation: "compact", maximumFractionDigits: 1 }).format(x));
   const exChip = (ex, board) => {
     if (board === "SME") return `<span class="chip sme">${ex} SME</span>`;
+    if (ex === "BSE" && board === "Main/SME") return `<span class="chip bse">BSE</span>`;
     if (ex === "NSE") return `<span class="chip nse">NSE</span>`;
     if (ex === "BSE") return `<span class="chip bse">BSE</span>`;
     return ex ? `<span class="chip">${esc(ex)}</span>` : "";
@@ -52,7 +53,15 @@ import * as engine from "./engine.js";
     return { key: n.likelyTrigger || "other", text: n.likelyTrigger ? label(n.likelyTrigger) : "unclear" };
   }
 
-  const relayHelp = (msg) => /relay/.test(msg) ? `${esc(msg)}<br><br>Free public relays are rate-limited and sometimes down. <a href="#" class="open-settings">Set up your own free relay</a> (2 minutes) for reliable data.` : esc(msg);
+  function relayHelp(msg) {
+    if (/No data relay/.test(msg)) { showRelaySetup(true); return `Connect a data relay first (one-time, ~2 minutes) — see the steps above.`; }
+    return /relay/.test(msg) ? `${esc(msg)} <a href="#" class="open-settings">Check relay settings</a>.` : esc(msg);
+  }
+  function showRelaySetup(scroll) {
+    const el = $("#relaySetup");
+    el.hidden = false;
+    if (scroll) el.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
 
   /* ---------- search ---------- */
   const q = $("#q"), dd = $("#dropdown"), goBtn = $("#goBtn");
@@ -65,8 +74,8 @@ import * as engine from "./engine.js";
     if (!items.length) { dd.innerHTML = `<div class="opt-empty">No listings found. Try the NSE symbol (e.g. TATAMOTORS) or 6-digit BSE code.</div>`; dd.hidden = false; return; }
     dd.innerHTML = items.map((r, i) => `
       <div class="opt ${i === active ? "active" : ""}" data-i="${i}">
-        <div class="nm"><b>${esc(r.name)}</b><span>${esc([r.sector, r.industry].filter(Boolean).join(" · ") || (r.source === "direct" ? "Use ticker as typed" : ""))}</span></div>
-        <span class="sym">${esc(r.symbol)}</span>${exChip(r.exchange, r.board)}
+        <div class="nm"><b>${esc(r.name)}</b><span>${esc([r.sector, r.industry].filter(Boolean).join(" · ") || (r.source === "direct" ? "Use ticker as typed" : r.isin || ""))}</span></div>
+        <span class="sym">${esc(r.code || r.symbol)}</span>${exChip(r.exchange, r.board)}
       </div>`).join("");
     dd.hidden = false;
   }
@@ -113,12 +122,39 @@ import * as engine from "./engine.js";
     q.value = r.name && r.source !== "direct" ? r.name : r.symbol;
     dd.hidden = true;
     goBtn.disabled = false;
-    $("#selected").innerHTML = `Selected <span class="chip">${esc(r.symbol)}</span> ${exChip(r.exchange, r.board)} ${r.source === "search" ? esc(r.name) : ""}`;
+    $("#selected").innerHTML = `Selected <span class="chip">${esc(r.symbol)}</span> ${exChip(r.exchange, r.board)} ${r.source !== "direct" ? esc(r.name) : ""}`;
     if (run) analyze();
   }
 
   /* ---------- controls ---------- */
   const thInputs = [$("#thDaily"), $("#thWeekly"), $("#thMonthly")];
+  const onInputs = [$("#onDaily"), $("#onWeekly"), $("#onMonthly")];
+  const FRAME_KEYS = ["daily", "weekly", "monthly"];
+  const FRAME_NAMES = { daily: "Daily", weekly: "Weekly", monthly: "Monthly" };
+  function syncFrameToggles() {
+    onInputs.forEach((cb, i) => {
+      thInputs[i].disabled = !cb.checked;
+      cb.closest(".frame-ctl").classList.toggle("off", !cb.checked);
+    });
+  }
+  onInputs.forEach((cb) => cb.addEventListener("change", () => {
+    if (!onInputs.some((x) => x.checked)) cb.checked = true; // keep at least one frame
+    syncFrameToggles();
+  }));
+  syncFrameToggles();
+  /** Frames that were analysed in the current result. */
+  const activeFrames = () => FRAME_KEYS.filter((f) => state.data?.params.thresholds[f] > 0);
+  function syncFrameSegs() {
+    const act = activeFrames();
+    if (!act.includes(state.frame)) state.frame = act[0];
+    if (!act.includes(state.chartFrame)) state.chartFrame = act[0];
+    for (const [id, key] of [["#frameSeg", "frame"], ["#chartFrameSeg", "chartFrame"]]) {
+      $$(`${id} button`).forEach((b) => {
+        b.hidden = !act.includes(b.dataset.frame);
+        b.classList.toggle("on", b.dataset.frame === state[key]);
+      });
+    }
+  }
   $("#modeSeg").addEventListener("click", (e) => {
     const b = e.target.closest("button"); if (!b) return;
     state.thresholds[state.mode] = thInputs.map((i) => +i.value);
@@ -161,7 +197,8 @@ import * as engine from "./engine.js";
   async function analyze() {
     const sel = state.selected;
     if (!sel) return;
-    const [d, w, m] = thInputs.map((i) => i.value || 0);
+    const [d, w, m] = thInputs.map((i, n) => (onInputs[n].checked ? +i.value || 0 : 0));
+    if (!(d > 0 || w > 0 || m > 0)) { status("Turn on at least one of daily / weekly / monthly and give it a threshold above 0.", true); return; }
     goBtn.disabled = true; goBtn.classList.add("loading");
     status(`<span class="spinner"></span>Pulling price history for <b>${esc(sel.symbol)}</b> and scanning for moves…`);
     try {
@@ -187,7 +224,8 @@ import * as engine from "./engine.js";
     const d = state.data;
     $("#results").hidden = false;
     $("#demoBadge").hidden = !d.demo;
-    renderCompany(); renderTiles(); renderPriceChart(); renderSigmaChart(); renderYears(); renderTable();
+    syncFrameSegs();
+    renderCompany(); renderIndustry(); renderTiles(); renderPriceChart(); renderSigmaChart(); renderYears(); renderTable();
     renderDriverDNA();
     setTimeout(() => $("#results").scrollIntoView({ behavior: "smooth", block: "start" }), 50);
   }
@@ -203,12 +241,28 @@ import * as engine from "./engine.js";
     const ctx = [d.benchmark.available && d.benchmark.name, d.sectorIndex?.available && d.sectorIndex.name,
       ...d.factorsTracked.filter((f) => f.available).map((f) => f.name)].filter(Boolean);
     $("#coMeta").innerHTML += `<div class="ctx-line">Compared against: ${ctx.map((c) => `<span class="chip">${esc(c)}</span>`).join("") || `<span class="muted">market data unavailable</span>`}</div>`;
-    $("#playbook").innerHTML = `Typical triggers for this sector: ` + d.playbook.map((p) => `<span class="chip cat">${esc(p.label)}</span>`).join("");
+    $("#playbook").innerHTML = `Industry: <span class="chip cat">${esc(d.industry.name)}</span>`;
     const cs = d.currentSigma;
     $("#coRight").innerHTML = `
       <div class="px">₹${num(last.c)}</div>
       <div class="${cls(chg)}" style="font-family:var(--mono)">${pct(chg)} <span class="muted">${fmtDate(last.t)}</span></div>
       <div class="sig">${d.params.sigmaYears}y σ · day ${pct(cs.daily, 2).replace("+", "")} · wk ${pct(cs.weekly, 1).replace("+", "")} · mo ${pct(cs.monthly, 1).replace("+", "")}</div>`;
+  }
+
+  function renderIndustry() {
+    const d = state.data, ind = d.industry;
+    $("#industryName").textContent = `— ${ind.name}`;
+    $("#indRally").innerHTML = ind.rally.map((x) => `<li>${esc(x)}</li>`).join("");
+    $("#indSell").innerHTML = ind.selloff.map((x) => `<li>${esc(x)}</li>`).join("");
+    $("#indMetrics").innerHTML = ind.metrics.map((m) => `<span class="chip">${esc(m)}</span>`).join("");
+    const icon = { tailwind: "🟢", headwind: "🔴", neutral: "🟡", context: "⚪" };
+    const m = d.triggerMatrix || [];
+    $("#matrixAsOf").textContent = m[0]?.asOf ? `as of ${fmtDate(m[0].asOf)}` : "";
+    $("#matrix").innerHTML = m.length ? `<table class="ctx matrix"><tbody>${m.map((r) => `<tr>
+        <td><b>${esc(r.name)}</b><small>${esc(r.why)}</small></td>
+        <td class="${cls(r.change)}">${pct(r.change, 1)}</td>
+        <td><span class="st ${r.status}">${icon[r.status]} ${r.status}</span></td></tr>`).join("")}</tbody></table>`
+      : `<p class="muted">No market data.</p>`;
   }
 
   function renderTiles() {
@@ -220,10 +274,11 @@ import * as engine from "./engine.js";
       return tile(`${name} moves ≥ <span class="nc">±${th[f]}${unit}</span>`, x.count ?? 0,
         x.count ? `<span class="pos">▲ ${x.up}</span> · <span class="neg">▼ ${x.down}</span> · max ${pct(x.biggestUp, 1)} / ${pct(x.biggestDown, 1)}` : "none in range");
     };
-    const x = s.daily?.count ? s.daily : s.weekly?.count ? s.weekly : s.monthly || {};
+    const act = activeFrames();
+    const x = s[act.find((f) => s[f]?.count) || act[0]] || {};
     const share = (v) => (v == null ? "—" : `${Math.round(v * 100)}%`);
     $("#tiles").innerHTML =
-      frameTile("daily", "Daily") + frameTile("weekly", "Weekly") + frameTile("monthly", "Monthly") +
+      act.map((f) => frameTile(f, FRAME_NAMES[f])).join("") +
       tile("Volume build-up before", share(x.volumeBuildupShare), `of moves had pre-week volume ≥1.5× normal`) +
       tile("Stock-specific", x.count ? share(x.drivers.stock / x.count) : "—",
         x.count ? `market-wide ${share(x.drivers.market / x.count)} · sector-wide ${share(x.drivers.sector / x.count)}` : "") +
@@ -409,7 +464,7 @@ import * as engine from "./engine.js";
     if (e.driver === "market") out.push(`<b>Market-wide:</b> ${esc(bn)} moved ${pct(e.benchmarkChange, 1)}${zs(e.benchmarkZ)} over the same period — the stock moved with the whole market.`);
     else if (e.driver === "sector") out.push(`<b>Sector-wide:</b> ${esc(sn)} moved ${pct(e.sectorChange, 1)}${zs(e.sectorZ)} while ${esc(bn)} moved ${pct(e.benchmarkChange, 1)} — a sector move, not just this company.`);
     else if (e.benchmarkChange != null) out.push(`<b>Stock-specific:</b> ${esc(bn)} moved ${pct(e.benchmarkChange, 1)}${e.sectorChange != null ? `, ${esc(sn)} ${pct(e.sectorChange, 1)}` : ""} — look for company news.`);
-    for (const f of notableFactors(e)) out.push(`<b>${esc(f.name)}</b> moved ${pct(f.change, 1)}${zs(f.z)} in the same period — relevant here as ${esc(f.why)}.`);
+    for (const f of notableFactors(e)) if (!f.explains) out.push(`<b>${esc(f.name)}</b> moved ${pct(f.change, 1)}${zs(f.z)} in the same period.`);
     const vix = (e.factors || []).find((f) => f.kind === "vol");
     if (vix && Math.abs(vix.change) >= 0.15) out.push(`<b>India VIX</b> ${vix.change > 0 ? "jumped" : "fell"} ${pct(vix.change, 0)} — ${vix.change > 0 ? "market-wide fear" : "fear subsiding"}.`);
     if (e.episodes.length) out.push(`Falls in a known market episode: <b>${e.episodes.map((x) => esc(x.name)).join(", ")}</b>.`);
@@ -436,6 +491,49 @@ import * as engine from "./engine.js";
       <div class="legend muted" style="font-size:11.5px">${fmtDate(pts[0].t)} → ${fmtDate(pts[pts.length - 1].t)} · shaded = the move · dashed = 50-day avg volume</div>`;
   }
 
+  /** Event -> Industry -> Trigger -> Direction, at macro, industry and company level. */
+  function chainHtml(e, n) {
+    const d = state.data, ind = d.industry.name, dirTxt = e.direction === "up" ? "rally" : "sell-off";
+    const B = (k) => d.buckets[k]?.label || k;
+    const T = (k) => d.buckets[k]?.tier || "";
+    const levels = [];
+    // Macro
+    const macro = [];
+    for (const x of e.episodes) macro.push(`<b>${esc(x.name)}</b> <span class="muted">(${esc(x.kind)})</span>`);
+    if (e.driver === "market") macro.push(`${esc(d.benchmark.name)} ${pct(e.benchmarkChange, 1)} — the whole market moved`);
+    for (const f of e.factors.filter((f) => f.explains)) {
+      macro.push(`<b>${esc(f.name)} ${pct(f.change, 1)}</b> (${num(Math.abs(f.z), 1)}σ) → ${f.sens * f.change > 0 ? "tailwind" : "headwind"} for ${esc(ind)} <span class="muted">(${esc(f.why)})</span>`);
+    }
+    const vix = e.factors.find((f) => f.kind === "vol");
+    if (vix && Math.abs(vix.change) >= 0.15) macro.push(`India VIX ${pct(vix.change, 0)} — ${vix.change > 0 ? "risk-off" : "risk-on"}`);
+    const ctxNews = (scope) => (n?.items || []).filter((it) => it.scope === scope);
+    const bucketsOf = (items) => {
+      const c = {};
+      for (const it of items) for (const b of it.buckets || []) c[b] = (c[b] || 0) + 1;
+      return Object.entries(c).sort((a, b) => b[1] - a[1]).slice(0, 3);
+    };
+    for (const [b, c] of bucketsOf(ctxNews("market"))) macro.push(`Market news: <b>${esc(B(b))}</b> ×${c} <span class="muted">${esc(T(b))}</span>`);
+    levels.push(["Macro", macro]);
+    // Industry
+    const indL = [];
+    if (e.sectorChange != null) indL.push(`${esc(d.sectorIndex?.name || "Sector")} ${pct(e.sectorChange, 1)}${e.driver === "sector" ? " — sector-wide move" : ""}`);
+    for (const [b, c] of bucketsOf(ctxNews("sector"))) indL.push(`Sector / commodity news: <b>${esc(B(b))}</b> ×${c} <span class="muted">${esc(T(b))}</span>`);
+    levels.push([`Industry · ${esc(ind)}`, indL]);
+    // Company
+    const coL = [];
+    const co = ctxNews("company");
+    if (n?.likelyTrigger) coL.push(`Most headlines: <b>${esc(label(n.likelyTrigger))}</b>`);
+    for (const [b, c] of bucketsOf(co)) {
+      const tone = co.filter((it) => it.buckets.includes(b)).reduce((a, it) => a + it.tone, 0);
+      coL.push(`<b>${esc(B(b))}</b> ×${c} ${tone > 0 ? '<span class="pos">▲ bullish tone</span>' : tone < 0 ? '<span class="neg">▼ bearish tone</span>' : ""} <span class="muted">${esc(T(b))}</span>`);
+    }
+    if (!n) coL.push(`<span class="muted">loading headlines…</span>`);
+    levels.push(["Company", coL]);
+    const verdict = triggerOf(e);
+    return `<div class="chain">${levels.map(([title, items]) => `<div class="lvl"><div class="lvl-t">${title}</div>${items.length ? items.map((x) => `<div class="lvl-i">${x}</div>`).join("") : `<div class="lvl-i muted">nothing notable</div>`}</div>`).join('<div class="arrow">↓</div>')}
+      <div class="verdict">→ ${e.direction === "up" ? "▲" : "▼"} ${esc(dirTxt)} of ${pct(e.change, 1)}${verdict ? ` · most likely: <b>${esc(verdict.text)}</b>` : ""}</div></div>`;
+  }
+
   function contextHtml(e) {
     const d = state.data;
     const rows = [
@@ -457,7 +555,7 @@ import * as engine from "./engine.js";
     const counts = Object.entries(n.categoryCounts).sort((a, b) => b[1] - a[1]);
     const item = (it) => `<a class="news-item" href="${esc(it.url)}" target="_blank" rel="noopener">
         <div class="t">${esc(it.title)}</div>
-        <div class="m">${it.date ? fmtDate(it.date) : ""} ${it.source ? "· " + esc(it.source) : ""} ${it.categories.filter((c) => c !== "other").map((c) => `<span class="chip cat">${esc(label(c))}</span>`).join("")}</div>
+        <div class="m">${it.tone > 0 ? '<span class="pos">▲</span>' : it.tone < 0 ? '<span class="neg">▼</span>' : ""} ${it.date ? fmtDate(it.date) : ""} ${it.source ? "· " + esc(it.source) : ""} ${(it.buckets || []).slice(0, 3).map((b) => `<span class="chip cat">${esc(state.data.buckets[b]?.label || b)}</span>`).join("")}</div>
       </a>`;
     const group = (scope, title) => {
       const items = n.items.filter((it) => (it.scope || "company") === scope);
@@ -484,6 +582,8 @@ import * as engine from "./engine.js";
       </div>
       <div class="section-t">The week before → the move <button class="btn ghost" id="zoomBtn" style="padding:5px 10px;font-size:12px">Show on chart</button></div>
       ${miniChart(e)}
+      <div class="section-t">Trigger chain <span class="muted" style="font-weight:400">event → industry → trigger → direction</span></div>
+      <div id="chainBox">${chainHtml(e, state.news.get(e.id))}</div>
       <div class="section-t">What else moved <span class="muted" style="font-weight:400">σ = vs its own trailing 1y volatility</span></div>
       ${contextHtml(e)}
       <div class="section-t">What the tape says</div>
@@ -503,6 +603,7 @@ import * as engine from "./engine.js";
       const n = await loadNews(e);
       if (!drawer.classList.contains("open")) return;
       $("#newsBox").innerHTML = newsHtml(n);
+      $("#chainBox").innerHTML = chainHtml(e, n);
       const t = triggerOf(e);
       $("#likely").innerHTML = t ? `likely: <b style="color:var(--ink)">${esc(t.text)}</b>` : "";
       renderTable();
@@ -551,7 +652,7 @@ import * as engine from "./engine.js";
       </div>
       <div class="dna-grid" style="margin-top:16px">
         <div><h3>Market episodes behind moves</h3><div class="row">${list(s.topEpisodes, "none of the curated episodes")}</div></div>
-        <div><h3>Commodity / macro moves ≥2σ alongside</h3><div class="row">${list(s.notableFactors, "none")}</div></div>
+        <div><h3>Macro moves that explain them <span class="muted">(given ${esc(state.data.industry.name)} sensitivities)</span></h3><div class="row">${list(s.explainingFactors, "none ≥1.5σ in the right direction")}</div></div>
       </div>`;
   }
 
@@ -574,7 +675,22 @@ import * as engine from "./engine.js";
     insight += tu ? `rallies most often lined up with <b>${esc(label(tu[0]))}</b> (${Math.round((tu[1] / tot.up) * 100)}% of up-moves)` : "up-moves had no clear news pattern";
     insight += td ? `, sell-offs with <b>${esc(label(td[0]))}</b> (${Math.round((td[1] / tot.down) * 100)}% of down-moves)` : "";
     insight += `. ${vb} of ${evs.length} (${Math.round((vb / evs.length) * 100)}%) showed a volume build-up in the week before.`;
-    $("#dna").innerHTML = driverDNA() + `<h3 style="margin-top:22px">Triggers of the ${evs.length} biggest moves (market / sector / company news)</h3><div class="dna-grid">
+    // Framework view: which master trigger buckets show up in the news around rallies vs sell-offs.
+    const bk = { up: {}, down: {} };
+    for (const e of evs) {
+      const n = state.news.get(e.id); if (!n) continue;
+      for (const [b, c] of Object.entries(n.bucketCounts || {})) bk[e.direction][b] = (bk[e.direction][b] || 0) + Math.min(c, 3);
+    }
+    const bblock = (dir) => {
+      const rows = Object.entries(bk[dir]).sort((a, b) => b[1] - a[1]).slice(0, 8);
+      if (!rows.length) return `<p class="muted">No headlines.</p>`;
+      const max = rows[0][1];
+      return rows.map(([k, c]) => `<div class="bar-row"><span>${esc(state.data.buckets[k]?.label || k)}<small class="muted"> · ${esc((state.data.buckets[k]?.tier || "").split(" ")[0])}</small></span><div class="track"><div class="fill ${dir}" style="width:${(c / max) * 100}%"></div></div><b>${c}</b></div>`).join("");
+    };
+    $("#dna").innerHTML = driverDNA() + `<h3 style="margin-top:22px">Trigger buckets in the news (master framework)</h3><div class="dna-grid">
+        <div><h3><span class="pos">▲</span> Around rallies</h3>${bblock("up")}</div>
+        <div><h3><span class="neg">▼</span> Around sell-offs</h3>${bblock("down")}</div>
+      </div><h3 style="margin-top:22px">Most likely trigger of each of the ${evs.length} biggest moves</h3><div class="dna-grid">
         <div><h3><span class="pos">▲</span> Up-moves (${tot.up})</h3>${block("up")}</div>
         <div><h3><span class="neg">▼</span> Down-moves (${tot.down})</h3>${block("down")}</div>
       </div><div class="insight">${insight}</div>`;
@@ -596,11 +712,21 @@ import * as engine from "./engine.js";
     if (v && !/^https:\/\/.+/.test(v)) { $("#proxyMsg").textContent = "Relay URL must start with https://"; return; }
     engine.setCustomProxy(v);
     dlg.close();
-    status(v ? "Using your relay. Search again to load data." : "Using the public relays.");
+    status(v ? "Using your relay. Search again to load data." : "Relay removed.");
+    if (!v && !engine.relayUrl()) showRelaySetup(false); else $("#relaySetup").hidden = true;
   });
   $("#proxyCancel").addEventListener("click", (e) => { e.preventDefault(); dlg.close(); });
 
+  $("#relayInlineSave").addEventListener("click", () => {
+    const v = $("#relayInline").value.trim();
+    if (!/^https:\/\/.+/.test(v)) { $("#relayInlineMsg").textContent = "Paste the worker URL — it starts with https://"; return; }
+    engine.setCustomProxy(v);
+    $("#relaySetup").hidden = true;
+    status("Relay connected. Search for a company to load live data.");
+  });
+
   /* ---------- boot ---------- */
+  if (!engine.isDemo && !engine.relayUrl()) showRelaySetup(false);
   $("#demoBadge").hidden = !engine.isDemo;
   const fromHash = decodeURIComponent(location.hash.slice(1));
   if (fromHash) choose({ symbol: fromHash.toUpperCase(), name: fromHash.toUpperCase(), exchange: "", board: "", source: "direct" }, true);

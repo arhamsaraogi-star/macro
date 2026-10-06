@@ -1,4 +1,5 @@
 // Headline -> trigger classification and sector playbooks (pure; tested in Node).
+import { classifyTrigger } from "./playbooks.js";
 
 export const CATEGORIES = [
   ["results", "Quarterly results / earnings", [
@@ -113,7 +114,8 @@ export function rankNews(raw, { start, sector = "", industry = "" }) {
     if (cats.some((c) => preferred.has(c))) score += 1;
     if (cats[0] !== "other") score += 0.5;
     if (it.date) score += Math.max(0, 1 - Math.abs(Date.parse(it.date) - Date.parse(start)) / (10 * 864e5));
-    items.push({ ...it, scope: it.scope || "company", categories: cats, primary: cats[0], score: Math.round(score * 100) / 100 });
+    const trig = classifyTrigger(it.title);
+    items.push({ ...it, scope: it.scope || "company", categories: cats, primary: cats[0], buckets: trig.buckets, tone: trig.tone, score: Math.round(score * 100) / 100 });
   }
   items.sort((a, b) => b.score - a.score || (a.date || "").localeCompare(b.date || ""));
   const company = items.filter((it) => it.scope === "company");
@@ -121,5 +123,7 @@ export function rankNews(raw, { start, sector = "", industry = "" }) {
   for (const it of company) counts[it.primary] = (counts[it.primary] || 0) + 1;
   const likely = Object.entries(counts).sort((a, b) => b[1] - a[1]).find(([k]) => k !== "other")?.[0] ?? null;
   const context = items.filter((it) => it.scope !== "company").slice(0, 12);
-  return { items: [...company.slice(0, 25), ...context], categoryCounts: counts, likelyTrigger: likely };
+  const buckets = {};
+  for (const it of [...company, ...context]) for (const b of it.buckets) buckets[b] = (buckets[b] || 0) + 1;
+  return { items: [...company.slice(0, 25), ...context], categoryCounts: counts, likelyTrigger: likely, bucketCounts: buckets };
 }

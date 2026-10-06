@@ -1,15 +1,11 @@
 // Market data straight from the browser: Yahoo Finance (search + chart API) and
 // Google News RSS. Those hosts don't send CORS headers, so requests go through a
-// relay — the user's own (Settings) or a chain of free public CORS proxies.
+// relay: a tiny Cloudflare Worker (relay/worker.js). The relay URL comes from, in order,
+// a ?relay= link (saved), the user's Settings (localStorage), or the site default in config.js.
 
 import { cleanCompanyName, newsWindow, rankNews } from "./news.js";
 
 const PROXY_KEY = "macro.proxy";
-const PUBLIC_PROXIES = [
-  { name: "allorigins", wrap: (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}` },
-  { name: "codetabs", wrap: (u) => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(u)}` },
-  { name: "corsproxy.io", wrap: (u) => `https://corsproxy.io/?url=${encodeURIComponent(u)}` },
-];
 
 export function getCustomProxy() {
   try { return localStorage.getItem(PROXY_KEY) || ""; } catch { return ""; }
@@ -17,18 +13,18 @@ export function getCustomProxy() {
 export function setCustomProxy(url) {
   try { url ? localStorage.setItem(PROXY_KEY, url.trim()) : localStorage.removeItem(PROXY_KEY); } catch { /* storage blocked */ }
 }
+// A shared link like ?relay=https://… configures the relay for this browser.
+try {
+  const fromLink = new URLSearchParams(globalThis.location?.search || "").get("relay");
+  if (fromLink && /^https:\/\//.test(fromLink)) setCustomProxy(fromLink);
+} catch { /* not in a browser */ }
 
-function relays() {
-  const custom = getCustomProxy();
-  const own = custom ? [{ name: "your relay", wrap: (u) => `${custom.replace(/\/+$/, "")}/?url=${encodeURIComponent(u)}` }] : [];
-  // Remember which public proxy worked last and try it first.
-  let preferred = "";
-  try { preferred = sessionStorage.getItem("macro.lastProxy") || ""; } catch { /* ignore */ }
-  const pub = [...PUBLIC_PROXIES].sort((a, b) => (b.name === preferred) - (a.name === preferred));
-  return [...own, ...pub];
+export function relayUrl() {
+  return getCustomProxy() || globalThis.MACRO_CONFIG?.relay || "";
 }
 
 export class RelayError extends Error {}
+export class NeedsRelayError extends RelayError {}
 
 // Free relays rate-limit bursts, so keep at most a few requests in flight.
 const MAX_IN_FLIGHT = 4;
@@ -44,25 +40,23 @@ function relayFetch(url, opts) {
   return limited(() => relayFetchNow(url, opts));
 }
 
-async function relayFetchNow(url, { type = "json", timeout = 15000 } = {}) {
-  const errors = [];
-  for (const r of relays()) {
-    const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), timeout);
-    try {
-      const res = await fetch(r.wrap(url), { signal: ctl.signal });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const text = await res.text();
-      const body = type === "json" ? JSON.parse(text) : text;
-      try { if (r.name !== "your relay") sessionStorage.setItem("macro.lastProxy", r.name); } catch { /* ignore */ }
-      return body;
-    } catch (e) {
-      errors.push(`${r.name}: ${e.name === "AbortError" ? "timeout" : e.message}`);
-    } finally {
-      clearTimeout(timer);
-    }
+async function relayFetchNow(url, { type = "json", timeout = 20000 } = {}) {
+  const relay = relayUrl();
+  if (!relay) throw new NeedsRelayError("No data relay connected yet.");
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeout);
+  try {
+    const res = await fetch(`${relay.replace(/\/+$/, "")}/?url=${encodeURIComponent(url)}`, { signal: ctl.signal });
+    if (res.status === 404 && /\/v8\/finance\/chart\//.test(url)) return type === "json" ? { chart: { result: null } } : "";
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const text = await res.text();
+    return type === "json" ? JSON.parse(text) : text;
+  } catch (e) {
+    if (e instanceof RelayError) throw e;
+    throw new RelayError(`Your data relay couldn't reach ${new URL(url).host} (${e.name === "AbortError" ? "timeout" : e.message}).`);
+  } finally {
+    clearTimeout(timer);
   }
-  throw new RelayError(`Couldn't reach ${new URL(url).host} through any relay (${errors.join("; ")}).`);
 }
 
 const cache = new Map();
@@ -105,13 +99,65 @@ async function yahooSearch(q) {
   return body.quotes || [];
 }
 
+/* ---------- local ticker list (official NSE / BSE lists, built in CI) ---------- */
+
+let listPromise = null;
+function loadTickerList() {
+  listPromise ||= fetch(new URL("../data/tickers.json", import.meta.url))
+    .then((r) => (r.ok ? r.json() : { rows: [] }))
+    .then((d) => (d.rows || []).map((r) => ({ ...r, key: `${r.n} ${r.s} ${r.id || ""}`.toLowerCase() })))
+    .catch(() => []);
+  return listPromise;
+}
+
+/** Yahoo symbol for an official-list row. */
+export function yahooSymbol(row) {
+  if (row.x === "NSE") return row.b === "SME" ? `${row.s}-SM.NS` : `${row.s}.NS`;
+  return `${row.s}.BO`;
+}
+
+/** Rank official-list rows for a query: every word must prefix-match a word of the name/symbol. */
+export function matchTickers(rows, q, limit = 12) {
+  const words = q.toLowerCase().replace(/[^a-z0-9& ]+/g, " ").split(/\s+/).filter(Boolean);
+  if (!words.length) return [];
+  const qs = q.trim().toLowerCase();
+  const scored = [];
+  for (const r of rows) {
+    const tokens = r.key.replace(/[^a-z0-9& ]+/g, " ").split(/\s+/);
+    if (!words.every((w) => tokens.some((t) => t.startsWith(w)))) continue;
+    let score = 0;
+    if (r.s.toLowerCase() === qs || (r.id || "").toLowerCase() === qs) score += 100;
+    if (r.n.toLowerCase().startsWith(qs)) score += 40;
+    if (tokens[0].startsWith(words[0])) score += 10;
+    score -= r.n.length / 100;
+    if (r.x === "NSE") score += 1;
+    scored.push([score, r]);
+  }
+  return scored.sort((a, b) => b[0] - a[0]).slice(0, limit).map(([, r]) => r);
+}
+
+async function localSearch(q, limit) {
+  const rows = await loadTickerList();
+  return matchTickers(rows, q, limit).map((r) => ({
+    symbol: yahooSymbol(r), name: r.n, exchange: r.x, board: r.b,
+    sector: "", industry: r.ind || "", isin: r.i || "",
+    code: r.x === "BSE" ? `${r.id || ""}${r.id ? " · " : ""}${r.s}` : r.s, source: "list",
+  }));
+}
+
 export async function search(q, { indiaOnly = true, limit = 12 } = {}) {
   q = q.trim();
   if (!q) return [];
   return cached(`s:${q.toLowerCase()}:${indiaOnly}`, async () => {
+    // The official NSE list answers instantly with no relay; Yahoo search (via the relay)
+    // adds BSE-only listings and anything the list misses.
+    const local = await localSearch(q, limit);
     let quotes = [];
-    try { quotes = await yahooSearch(q); } catch (e) { if (!directCandidates(q).length) throw e; }
-    const seen = new Set(), out = [];
+    if (relayUrl()) {
+      try { quotes = await Promise.race([yahooSearch(q), new Promise((_, rej) => setTimeout(() => rej(new Error("slow")), 6000))]); } catch { /* list results are enough */ }
+    }
+    if (!local.length && !quotes.length && !directCandidates(q).length && !relayUrl()) throw new NeedsRelayError("No data relay connected yet.");
+    const seen = new Set(local.map((r) => r.symbol)), out = [...local];
     for (const it of quotes) {
       const sym = it.symbol;
       if (!sym || seen.has(sym) || (it.quoteType && it.quoteType !== "EQUITY")) continue;
@@ -128,15 +174,16 @@ export async function search(q, { indiaOnly = true, limit = 12 } = {}) {
     // Offer the raw input as a ticker only when it looks like one (typed in caps / a BSE code)
     // or when search found nothing.
     const tickerish = q === q.toUpperCase() || /^\d{6}$/.test(q);
-    for (const sym of out.length && !tickerish ? [] : directCandidates(q)) {
+    for (const sym of out.length && (!tickerish || local.length) ? [] : directCandidates(q)) {
       if (seen.has(sym)) continue;
       const ex = exchangeOf(sym);
       out.push({ symbol: sym, name: `${q.toUpperCase()} (direct ticker)`, ...ex, sector: "", industry: "", source: "direct" });
       seen.add(sym);
     }
     const order = { NSE: 0, BSE: 1 };
-    out.sort((a, b) => (a.source !== "search") - (b.source !== "search") || (order[a.exchange] ?? 2) - (order[b.exchange] ?? 2));
-    return out.slice(0, limit);
+    const rank = { list: 0, search: 1, direct: 2 };
+    out.sort((a, b) => rank[a.source] - rank[b.source] || (order[a.exchange] ?? 2) - (order[b.exchange] ?? 2));
+    return out.slice(0, limit + 4);
   });
 }
 
@@ -180,7 +227,8 @@ export function history(symbol) {
 /** History for a symbol, trying NSE / BSE / SME suffixes when none was given. */
 export async function resolve(symbol) {
   symbol = symbol.trim().toUpperCase();
-  const cands = symbol.endsWith(".NS") || symbol.endsWith(".BO") || symbol.startsWith("^") ? [symbol] : directCandidates(symbol);
+  let cands = symbol.endsWith(".NS") || symbol.endsWith(".BO") || symbol.startsWith("^") ? [symbol] : directCandidates(symbol);
+  if (symbol.endsWith("-SM.NS")) cands = [symbol, symbol.replace("-SM.NS", "-ST.NS"), symbol.replace("-SM.NS", ".NS")];
   for (const c of cands.length ? cands : [symbol]) {
     const h = await history(c).catch((e) => { if (e instanceof RelayError) throw e; return { bars: [] }; });
     if (h.bars.length > 5) return { symbol: c, ...h };

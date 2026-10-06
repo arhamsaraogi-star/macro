@@ -114,16 +114,23 @@ test("news classification", () => {
 });
 
 import { episodesFor, factorsFor, sectorIndexFor } from "../site/js/context.js";
+import { classifyTrigger, playbookFor } from "../site/js/playbooks.js";
 
 test("sector index and factor mapping", () => {
   assert.equal(sectorIndexFor("Consumer Cyclical", "Auto Manufacturers").symbol, "^CNXAUTO");
   assert.equal(sectorIndexFor("Financial Services", "Banks - Regional").symbol, "^NSEBANK");
   assert.equal(sectorIndexFor("Technology", "Information Technology Services").symbol, "^CNXIT");
   assert.equal(sectorIndexFor("", ""), null);
-  const oil = factorsFor("Energy", "Oil & Gas Refining & Marketing").map((f) => f.key);
-  assert.ok(oil.includes("brent") && oil.includes("vix"));
-  assert.ok(factorsFor("Basic Materials", "Steel").some((f) => f.key === "steel"));
-  assert.ok(factorsFor("Technology", "Software").some((f) => f.key === "usdinr"));
+  const pb = (sector, industry, name = "") => playbookFor(sector, industry, name);
+  assert.equal(pb("Industrials", "Engineering & Construction").key, "epc");
+  assert.equal(pb("Basic Materials", "Specialty Chemicals", "Asian Paints Limited").key, "paints");
+  assert.equal(pb("Industrials", "Airlines").key, "airlines");
+  assert.equal(pb("Financial Services", "Banks - Regional").key, "banks");
+  assert.equal(pb("", "", "Unknown Co").key, "general");
+  const air = factorsFor(pb("Industrials", "Airlines"));
+  assert.equal(air.find((f) => f.key === "crude").sens, -1);
+  assert.ok(air.some((f) => f.key === "vix"));
+  assert.equal(factorsFor(pb("Basic Materials", "Steel")).find((f) => f.key === "steel").sens, 1);
 });
 
 test("episodes cover the move and the week before", () => {
@@ -140,12 +147,41 @@ test("sector-driven and commodity-flagged moves", () => {
   // commodity: quiet, then a 10% jump on the event day
   const oil = bars.map((b, i) => ({ t: b.t, c: (i >= 300 ? 110 : 100) * (1 + (i % 2) * 0.002) }));
   const e = findEvents(bars, { daily: 5 }, {
-    context: { market: { name: "M", bars: flat }, sector: { name: "S", bars: sector }, factors: [{ key: "brent", name: "Brent", why: "x", kind: "factor", bars: oil }] },
+    context: { market: { name: "M", bars: flat }, sector: { name: "S", bars: sector }, factors: [{ key: "brent", name: "Brent", why: "x", kind: "factor", sens: 1, bars: oil }] },
   }).find((x) => x.end === bars[300].t);
   assert.equal(e.driver, "sector");
   assert.ok(e.flags.includes("sector_driven"));
   const f = e.factors.find((x) => x.key === "brent");
   assert.ok(f.notable && f.change > 0.09);
   assert.ok(e.flags.includes("macro_factor"));
+  assert.ok(f.explains && e.flags.includes("macro_explains"));
   assert.ok(e.sectorChange > 0.08);
+});
+
+import { matchTickers, yahooSymbol } from "../site/js/market.js";
+
+test("local ticker search", () => {
+  const rows = [
+    { n: "TD Power Systems Limited", s: "TDPOWERSYS", x: "NSE", b: "Main" },
+    { n: "TD POWER SYSTEMS LTD.", s: "533553", id: "TDPOWERSYS", x: "BSE", b: "Main" },
+    { n: "Tata Power Company Limited", s: "TATAPOWER", x: "NSE", b: "Main" },
+    { n: "Krishca Strapping Solutions Limited", s: "KRISHCA", x: "NSE", b: "SME" },
+  ].map((r) => ({ ...r, key: `${r.n} ${r.s} ${r.id || ""}`.toLowerCase() }));
+  const hits = matchTickers(rows, "td power");
+  assert.deepEqual(hits.map((r) => r.s), ["TDPOWERSYS", "533553"]);
+  assert.equal(matchTickers(rows, "TATAPOWER")[0].s, "TATAPOWER");
+  assert.equal(matchTickers(rows, "533553")[0].x, "BSE");
+  assert.equal(yahooSymbol(hits[0]), "TDPOWERSYS.NS");
+  assert.equal(yahooSymbol(hits[1]), "533553.BO");
+  assert.equal(matchTickers(rows, "krishca")[0].b, "SME");
+});
+
+test("headline -> trigger bucket + tone", () => {
+  const a = classifyTrigger("RBI cuts repo rate by 50 bps; bank stocks rally");
+  assert.ok(a.buckets.includes("rates") && a.tone === 1);
+  const b = classifyTrigger("Steel prices slump as Chinese exports surge");
+  assert.ok(b.buckets.includes("commodities"));
+  const c = classifyTrigger("Sun Pharma gets USFDA warning letter, shares fall");
+  assert.ok(c.buckets.includes("regulation") && c.tone === -1);
+  assert.ok(classifyTrigger("Bharti Airtel announces tariff hike").buckets.includes("pricing"));
 });

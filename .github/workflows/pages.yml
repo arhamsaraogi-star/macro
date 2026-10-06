@@ -1,12 +1,15 @@
 name: Deploy site to GitHub Pages
 
-# GitHub Pages serves the `gh-pages` branch. This workflow runs the tests and
-# publishes the `site/` folder to that branch on every push to the default branch.
+# GitHub Pages serves the `gh-pages` branch. This workflow runs the tests, builds the
+# NSE ticker list for instant search, and publishes `site/` on every push to the default
+# branch, plus weekly so new listings show up.
 
 on:
   push:
     branches: ["**"]
-    paths: ["site/**", "tests/**", ".github/workflows/pages.yml"]
+    paths: ["site/**", "tests/**", "scripts/**", ".github/workflows/pages.yml"]
+  schedule:
+    - cron: "17 2 * * 1"
   workflow_dispatch:
 
 permissions:
@@ -32,6 +35,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build ticker list (NSE main board + SME)
+        run: node scripts/build-tickers.mjs
       - uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}

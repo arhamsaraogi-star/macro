@@ -1,0 +1,56 @@
+name: Relay end-to-end test
+
+# Runs relay/worker.js locally (wrangler dev) and fetches real Yahoo Finance and
+# Google News data through it, the same way the website does.
+on:
+  workflow_dispatch:
+  push:
+    paths: ["relay/**", ".github/workflows/relay-test.yml"]
+
+jobs:
+  relay:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Start relay
+        working-directory: relay
+        run: |
+          npx --yes wrangler@3 dev --port 8787 --ip 127.0.0.1 > /tmp/wrangler.log 2>&1 &
+          for i in $(seq 1 60); do curl -s http://127.0.0.1:8787/ >/dev/null && break; sleep 2; done
+          curl -s http://127.0.0.1:8787/; echo
+      - name: Fetch through relay
+        run: |
+          set -e
+          R=http://127.0.0.1:8787/?url=
+          enc() { node -e 'console.log(encodeURIComponent(process.argv[1]))' "$1"; }
+          check() {
+            echo "=== $1"
+            code=$(curl -sS -m 40 -H 'Origin: https://arhamsaraogi-star.github.io' -D /tmp/h -o /tmp/b -w '%{http_code}' "$R$(enc "$1")")
+            echo "status=$code size=$(wc -c < /tmp/b)"; grep -i '^access-control-allow-origin' /tmp/h; head -c 300 /tmp/b; echo
+            test "$code" = 200
+          }
+          NOW=$(date +%s)
+          check "https://query1.finance.yahoo.com/v8/finance/chart/TDPOWERSYS.NS?period1=0&period2=$NOW&interval=1d&events=div%2Csplit&includeAdjustedClose=true"
+          node -e 'const b=require("fs").readFileSync("/tmp/b","utf8");const r=JSON.parse(b).chart.result[0];console.log("bars:",r.timestamp.length,"first:",new Date(r.timestamp[0]*1000).toISOString().slice(0,10))'
+          check "https://query1.finance.yahoo.com/v8/finance/chart/KRISHCA-SM.NS?period1=0&period2=$NOW&interval=1d"
+          check "https://query1.finance.yahoo.com/v8/finance/chart/%5ECNXINFRA?period1=0&period2=$NOW&interval=1d"
+          check "https://query1.finance.yahoo.com/v8/finance/chart/BZ%3DF?period1=0&period2=$NOW&interval=1d"
+          check "https://query1.finance.yahoo.com/v1/finance/search?q=td%20power&quotesCount=10&newsCount=0&listsCount=0&enableFuzzyQuery=true"
+          check "https://news.google.com/rss/search?q=%22TD%20Power%20Systems%22%20after%3A2024-01-01%20before%3A2024-02-15&hl=en-IN&gl=IN&ceid=IN:en"
+          grep -o '<title>[^<]*</title>' /tmp/b | head -5
+          echo "=== blocked host check"; curl -s -o /dev/null -w '%{http_code}\n' "${R}https%3A%2F%2Fexample.com%2F"
+      - name: Sector index / factor symbols
+        run: |
+          R=http://127.0.0.1:8787/?url=
+          for s in ^NSEI ^BSESN ^CNXAUTO ^NSEBANK NIFTY_FIN_SERVICE.NS ^CNXIT ^CNXPHARMA ^CNXMETAL ^CNXENERGY ^CNXREALTY ^CNXFMCG ^CNXMEDIA ^CNXINFRA ^INDIAVIX ^CNXSC BZ=F NG=F GC=F HG=F ALI=F HRC=F SB=F CT=F INR=X DX-Y.NYB ^TNX 000001.SS ^GSPC; do
+            e=$(node -e 'console.log(encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(process.argv[1])}?range=1mo&interval=1d`))' "$s")
+            n=$(curl -s -m 30 "$R$e" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{const r=JSON.parse(d).chart.result;console.log(r?r[0].timestamp?.length??0:"none")}catch(e){console.log("err")}})')
+            echo "$s -> $n bars"
+          done
+      - name: Ticker list build
+        run: node scripts/build-tickers.mjs && node -e 'const d=require("./site/data/tickers.json");console.log(d.rows.length, d.rows.filter(r=>/TD POWER/i.test(r.n)))'
+      - if: always()
+        run: tail -30 /tmp/wrangler.log
