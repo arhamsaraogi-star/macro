@@ -243,8 +243,11 @@ test("exchange filings: type mapping, boilerplate, freshness", () => {
     f("Updates", "'Re-appointment of Shri Rana Kapoor as MD & CEO, YES BANK'", "2018-09-20"),
   ], { start: "2018-09-21", end: "2018-09-21", name: "Yes Bank" });
   assert.equal(y.items.find((i) => i.desc === "Raising of Funds").primary, "fundraise");
-  assert.equal(y.likelyTrigger, "management");
-  assert.ok(y.likelyFresh);
+  assert.equal(y.likelyTrigger, null); // only stale filings: no trigger named…
+  assert.equal(y.earlierTrigger, "management"); // …the latest of them is reported as "earlier"
+  const y2 = rankNews([{ title: "Yes Bank plunges after RBI curtails CEO Rana Kapoor's term", date: "2018-09-21" }],
+    { start: "2018-09-21", end: "2018-09-21", name: "Yes Bank" });
+  assert.equal(y2.likelyTrigger, "management");
   // HDFC Bank: results filed the evening before the move are fresh.
   const h = rankNews([f("Financial Result Updates", "submitted the financial results for the period ended December 31, 2023", "2024-01-16")],
     { start: "2024-01-17", end: "2024-01-17", name: "HDFC Bank" });
@@ -253,8 +256,11 @@ test("exchange filings: type mapping, boilerplate, freshness", () => {
   // TD Power: a filing 3 days earlier is stale.
   const t = rankNews([f("General Updates", "receipt of In-principle approval for the issue of equity shares to Promoters on a preferential basis", "2026-09-12")],
     { start: "2026-09-15", end: "2026-09-15", name: "TD Power Systems" });
-  assert.equal(t.likelyTrigger, "fundraise");
-  assert.equal(t.likelyFresh, false);
+  assert.equal(t.likelyTrigger, null);
+  assert.equal(t.earlierTrigger, "fundraise");
+  // A lone generic press release the day before is not enough to name a trigger.
+  const pr = rankNews([f("Press Release", "ATP AND INFOSYS LAUNCH NEW PLAYERZONE", "2017-08-17")], { start: "2017-08-18", end: "2017-08-18", name: "Infosys" });
+  assert.equal(pr.likelyTrigger, null);
   // Infosys: a generic partnership press release must not outweigh the CEO-resignation headlines.
   const i = rankNews([
     f("Press Release", "ATP AND INFOSYS LAUNCH NEW PLAYERZONE BRINGING AN ENHANCED DIGITAL EXPERIENCE FOR PLAYERS", "2017-08-17"),
