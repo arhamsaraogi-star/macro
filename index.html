@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Macro · Move Forensics</title>
+  <meta name="description" content="Find every big move in an NSE/BSE/SME stock, what price & volume did the week before, and the news that triggered it." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Cdefs%3E%3ClinearGradient id=%27g%27 x1=%270%27 y1=%270%27 x2=%271%27 y2=%271%27%3E%3Cstop offset=%270%27 stop-color=%27%236c7cff%27/%3E%3Cstop offset=%271%27 stop-color=%27%2327e0c4%27/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width=%2732%27 height=%2732%27 rx=%279%27 fill=%27url(%23g)%27/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="styles.css" />
+  <script src="vendor/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+  <!-- liquid backdrop -->
+  <div class="backdrop" aria-hidden="true">
+    <div class="orb o1"></div><div class="orb o2"></div><div class="orb o3"></div><div class="orb o4"></div>
+    <div class="grain"></div>
+  </div>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <filter id="liquid" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.008 0.012" numOctaves="2" seed="7" result="noise" />
+      <feGaussianBlur in="noise" stdDeviation="2" result="soft" />
+      <feDisplacementMap in="SourceGraphic" in2="soft" scale="38" xChannelSelector="R" yChannelSelector="G" />
+    </filter>
+  </svg>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo"><span></span></span>
+      <div>
+        <strong>macro</strong>
+        <small>move forensics · NSE · BSE · SME</small>
+      </div>
+    </div>
+    <div class="row">
+      <span id="demoBadge" class="chip warn" hidden>Demo data</span>
+      <button class="btn ghost icon-btn" id="settingsBtn" title="Data relay settings" aria-label="Settings">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <h1>What actually moves <span class="grad">this stock?</span></h1>
+      <p class="sub">Search any Indian listing. We scan up to 20 years of Yahoo Finance history for every big daily, weekly and monthly move, look at price &amp; volume the week before, and pull the news around it.</p>
+
+      <div class="search glass liquid" id="searchBox">
+        <svg class="ico" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="q" type="text" autocomplete="off" spellcheck="false"
+               placeholder="Company name, NSE symbol, or BSE code — e.g. Larsen, TATAMOTORS, 500325" />
+        <span class="kbd">/</span>
+        <div class="dropdown glass" id="dropdown" hidden></div>
+      </div>
+
+      <div class="controls glass">
+        <div class="ctl">
+          <label>Trigger type</label>
+          <div class="seg" id="modeSeg">
+            <button data-mode="percent" class="on">% move</button>
+            <button data-mode="sigma">σ move</button>
+          </div>
+        </div>
+        <div class="ctl">
+          <label>Daily <span class="unit">±%</span></label>
+          <input type="number" id="thDaily" value="5" min="0" step="0.5" />
+        </div>
+        <div class="ctl">
+          <label>Weekly <span class="unit">±%</span></label>
+          <input type="number" id="thWeekly" value="5" min="0" step="0.5" />
+        </div>
+        <div class="ctl">
+          <label>Monthly <span class="unit">±%</span></label>
+          <input type="number" id="thMonthly" value="5" min="0" step="0.5" />
+        </div>
+        <div class="ctl sigma-only" hidden>
+          <label>σ lookback</label>
+          <select id="sigmaYears">
+            <option value="1" selected>1 year</option>
+            <option value="2">2 years</option>
+            <option value="3">3 years</option>
+            <option value="5">5 years</option>
+          </select>
+        </div>
+        <div class="ctl">
+          <label>History</label>
+          <select id="years">
+            <option value="5">5 years</option>
+            <option value="10">10 years</option>
+            <option value="20" selected>20 years</option>
+            <option value="max">Since listing</option>
+          </select>
+        </div>
+        <button class="btn primary" id="goBtn" disabled>
+          <span>Analyse</span>
+        </button>
+      </div>
+      <div class="selected" id="selected"></div>
+    </section>
+
+    <div id="status" class="status" hidden></div>
+
+    <section id="results" hidden>
+      <!-- company -->
+      <div class="glass card company">
+        <div class="co-left">
+          <div class="co-name" id="coName"></div>
+          <div class="co-meta" id="coMeta"></div>
+          <div class="playbook" id="playbook"></div>
+        </div>
+        <div class="co-right" id="coRight"></div>
+      </div>
+
+      <!-- stats -->
+      <div class="tiles" id="tiles"></div>
+
+      <!-- chart -->
+      <div class="glass card">
+        <div class="card-head">
+          <h2>Price, volume &amp; trigger events</h2>
+          <div class="seg small" id="chartFrameSeg">
+            <button data-frame="daily" class="on">Daily</button>
+            <button data-frame="weekly">Weekly</button>
+            <button data-frame="monthly">Monthly</button>
+          </div>
+        </div>
+        <div id="priceChart" class="chart"></div>
+        <div class="legend"><span class="dot up"></span> up move <span class="dot down"></span> down move <span class="muted">· click a row below to zoom</span></div>
+      </div>
+
+      <div class="grid2">
+        <div class="glass card">
+          <div class="card-head">
+            <h2>Daily returns vs σ bands</h2>
+            <div class="seg small" id="bandSeg">
+              <button data-k="1">1σ</button>
+              <button data-k="2" class="on">2σ</button>
+              <button data-k="3">3σ</button>
+            </div>
+          </div>
+          <div id="sigmaChart" class="chart short"></div>
+          <div class="legend muted" id="sigmaLegend"></div>
+        </div>
+        <div class="glass card">
+          <div class="card-head"><h2>Big moves by year</h2><span class="muted" id="yearFrameLabel"></span></div>
+          <div id="yearBars" class="yearbars"></div>
+        </div>
+      </div>
+
+      <!-- trigger DNA -->
+      <div class="glass card">
+        <div class="card-head">
+          <h2>Trigger DNA <span class="muted">— what news sits behind the biggest moves</span></h2>
+          <div class="row">
+            <select id="dnaCount">
+              <option value="10">Top 10</option>
+              <option value="20" selected>Top 20</option>
+              <option value="40">Top 40</option>
+            </select>
+            <button class="btn" id="dnaBtn">Scan news</button>
+          </div>
+        </div>
+        <div id="dna" class="dna"><p class="muted">Scans headlines around the largest moves in the selected frame and classifies them (orders, monthly sales, results, USFDA, block deals…) so you can see what typically triggers this stock.</p></div>
+      </div>
+
+      <!-- events -->
+      <div class="glass card">
+        <div class="card-head">
+          <h2>Events <span class="muted" id="evCount"></span></h2>
+          <div class="row">
+            <div class="seg small" id="frameSeg">
+              <button data-frame="daily" class="on">Daily</button>
+              <button data-frame="weekly">Weekly</button>
+              <button data-frame="monthly">Monthly</button>
+            </div>
+            <div class="seg small" id="dirSeg">
+              <button data-dir="all" class="on">All</button>
+              <button data-dir="up">▲ Up</button>
+              <button data-dir="down">▼ Down</button>
+            </div>
+            <select id="sortSel">
+              <option value="date">Newest</option>
+              <option value="mag">Largest</option>
+              <option value="z">Highest σ</option>
+              <option value="prevol">Pre-week volume</option>
+            </select>
+            <button class="btn ghost" id="csvBtn">CSV</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table id="evTable">
+            <thead>
+              <tr>
+                <th>Date</th><th>Move</th><th>σ</th><th title="Benchmark move over the same period">Index</th>
+                <th title="Price change over the 5 sessions before">Pre-week</th>
+                <th title="Avg volume in the 5 sessions before ÷ 50-day baseline">Pre-vol ×</th>
+                <th title="Volume during the move ÷ baseline">Move vol ×</th>
+                <th title="Next 5 sessions">After</th><th>Signals</th><th>Trigger</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="pager" id="pager"></div>
+      </div>
+    </section>
+
+    <footer class="foot muted">
+      Data: Yahoo Finance (adjusted for splits/bonuses) · News: Google News search by date window · Runs entirely in your browser. Not investment advice.
+    </footer>
+  </main>
+
+  <!-- detail drawer -->
+  <div class="scrim" id="scrim" hidden></div>
+  <aside class="drawer glass" id="drawer" aria-hidden="true">
+    <button class="close" id="drawerClose" aria-label="Close">✕</button>
+    <div id="drawerBody"></div>
+  </aside>
+
+  <dialog id="settings" class="glass dialog">
+    <form method="dialog">
+      <h2>Data relay</h2>
+      <p class="muted">Your browser can't call Yahoo Finance or Google News directly, so requests go through a relay. By default the site uses free public relays, which can be slow or rate-limited. For reliable data, deploy the free Cloudflare Worker in this repo (<code>relay/worker.js</code>, about 2 minutes, see the README) and paste its URL here.</p>
+      <label class="ctl" style="margin-top:14px"><span>Your relay URL</span>
+        <input id="proxyUrl" type="url" placeholder="https://macro-relay.yourname.workers.dev" style="width:100%" />
+      </label>
+      <p id="proxyMsg" class="neg" style="min-height:18px;font-size:13px"></p>
+      <div class="row" style="justify-content:flex-end">
+        <button class="btn ghost" id="proxyCancel">Cancel</button>
+        <button class="btn primary" id="proxySave">Save</button>
+      </div>
+      <p class="muted" style="font-size:12.5px;margin-top:14px">Saved only in this browser. Leave empty to use the public relays. Want to try without any network? <a href="?demo=1">Open demo mode</a>.</p>
+    </form>
+  </dialog>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
