@@ -45,10 +45,11 @@ jobs:
       - name: Sector index / factor symbols
         run: |
           R=http://127.0.0.1:8787/?url=
-          for s in ^NSEI ^BSESN ^NSEBANK ^CNXIT ^CNXPHARMA ^INDIAVIX ^CNXAUTO NIFTY_AUTO.NS ^NIFTYAUTO AUTOBEES.NS ^CNXMETAL NIFTY_METAL.NS METALIETF.NS ^CNXENERGY NIFTY_ENERGY.NS ^CNXREALTY NIFTY_REALTY.NS ^CNXFMCG NIFTY_FMCG.NS ^CNXMEDIA ^CNXINFRA INFRABEES.NS NIFTY_FIN_SERVICE.NS ^CNXFIN ^CNXSC NIFTY_SMALLCAP_100.NS ^CNXSMCAP ^NSEMDCP50 ^CRSMID ^CNXPSUBANK ^CNXPSE ^CNXCMDT ^CNXCONSUM NIFTY_CPSE.NS CPSEETF.NS BANKBEES.NS ^BSESMLCAP ^BSEMDCAP BSE-AUTO.BO BSE-METAL.BO BSE-OILGAS.BO BSE-REALTY.BO BSE-FMCG.BO BSE-CG.BO BSE-POWER.BO BSE-HC.BO BSE-IT.BO BSE-BANK.BO BSE-CD.BO BSE-SMLCAP.BO BSE-MIDCAP.BO BSE-TECK.BO BSE-PSU.BO BSE-INFRA.BO BZ=F INR=X ^TNX 000001.SS ^GSPC DX-Y.NYB; do
-            e=$(node -e 'console.log(encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(process.argv[1])}?range=max&interval=1d`))' "$s")
-            n=$(curl -s -m 30 "$R$e" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{const r=JSON.parse(d).chart.result;console.log(r?`${r[0].timestamp?.length??0} first=${r[0].timestamp?new Date(r[0].timestamp[0]*1000).toISOString().slice(0,10):"-"} last=${r[0].timestamp?new Date(r[0].timestamp.at(-1)*1000).toISOString().slice(0,10):"-"}`:"none")}catch(e){console.log("err")}})')
-            echo "$s -> $n bars"
+          NOW=$(date +%s)
+          for s in ^NSEI ^NSEBANK ^CNXIT ^CNXAUTO ^CNXMETAL ^CNXENERGY ^CNXREALTY ^CNXFMCG ^CNXMEDIA ^CNXINFRA NIFTY_FIN_SERVICE.NS ^CNXPSUBANK ^CNXPSE ^CNXCMDT ^CNXCONSUM ^NSEMDCP50 ^CNXSC ^INDIAVIX INFRABEES.NS BANKBEES.NS; do
+            e=$(node -e 'console.log(encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(process.argv[1])}?period1=0&period2=${process.argv[2]}&interval=1d&events=div%2Csplit&includeAdjustedClose=true`))' "$s" "$NOW")
+            n=$(curl -s -m 30 "$R$e" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{const r=JSON.parse(d).chart.result;if(!r){console.log("none");return}const t=r[0].timestamp||[];const gaps=t.slice(1).map((x,i)=>(x-t[i])/86400).sort((a,b)=>a-b);const iso=x=>new Date(x*1000).toISOString().slice(0,10);console.log(`${t.length} bars ${t.length?iso(t[0]):""}..${t.length?iso(t.at(-1)):""} medianGapDays=${gaps.length?gaps[gaps>>1]??gaps[Math.floor(gaps.length/2)]:"-"}`)}catch(e){console.log("err",e.message)}})')
+            echo "$s -> $n"
           done
       - name: Ticker list build
         run: node scripts/build-tickers.mjs && node -e 'const d=require("./site/data/tickers.json");console.log(d.rows.length, d.rows.filter(r=>/TD POWER/i.test(r.n)))'
