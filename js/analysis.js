@@ -104,9 +104,9 @@ export function findEvents(bars, thresholds, { context = {}, mode = "percent", s
       const mktPre = preSpan && changeBetween(market?.series, ...preSpan);
       const secPre = preSpan && changeBetween(sector?.series, ...preSpan);
       const facts = factors.map((f) => {
-        const c = changeBetween(f.series, prevDate, endDate);
+        const c = changeBetween(f.series, prevDate, endDate, f.overseas);
         if (!c) return null;
-        const pc = preSpan && changeBetween(f.series, ...preSpan);
+        const pc = preSpan && changeBetween(f.series, ...preSpan, f.overseas);
         const sens = f.sens || 0;
         // Does this factor move explain the stock move, given the industry's sensitivity?
         const explains = sens !== 0 && c.z != null && Math.abs(c.z) >= 1.5 && Math.sign(sens * c.change) === Math.sign(p.ret);
@@ -117,6 +117,9 @@ export function findEvents(bars, thresholds, { context = {}, mode = "percent", s
       }).filter(Boolean);
       // Who moved it? The market, the sector, or the company itself.
       const driver = sameWay(mkt, p.ret) ? "market" : sameWay(sec, p.ret) ? "sector" : "stock";
+      // Partial drivers: the market / sector also moved unusually (≥2σ) the same way, just less than half as much.
+      const partial = (x) => !!x && x.z != null && Math.abs(x.z) >= 2 && x.change > 0 === p.ret > 0;
+      const alsoMoved = driver === "stock" ? [partial(mkt) && "market", partial(sec) && "sector"].filter(Boolean) : [];
       const episodes = episodesFor(bars[s].t, bars[e].t);
 
       const volRatioPre = baseline && preVol != null ? preVol / baseline : null;
@@ -130,6 +133,8 @@ export function findEvents(bars, thresholds, { context = {}, mode = "percent", s
       }
       if (volRatioEvent != null && volRatioEvent >= 2) flags.push("event_volume_spike");
       if (mkt || sec) flags.push({ market: "market_driven", sector: "sector_driven", stock: "stock_specific" }[driver]);
+      for (const x of alsoMoved) flags.push(`${x}_also`);
+      if (facts.some((f) => f.explains && f.key === "ai_dc")) flags.push("theme_ai");
       if (facts.some((f) => f.notable && f.kind === "factor")) flags.push("macro_factor");
       if (facts.some((f) => f.explains)) flags.push("macro_explains");
       if (facts.some((f) => f.kind === "vol" && f.change >= 0.15)) flags.push("fear_spike");
@@ -155,6 +160,7 @@ export function findEvents(bars, thresholds, { context = {}, mode = "percent", s
         sectorPreChange: round(secPre?.change),
         sectorZ: round(sec?.z, 2),
         driver,
+        alsoMoved,
         factors: facts,
         episodes,
         pre: {

@@ -33,11 +33,17 @@ export const FACTORS = {
   inr: { symbol: "INR=X", name: "USD/INR", query: "rupee dollar" },
   usd: { symbol: "DX-Y.NYB", name: "US dollar index", query: "dollar index" },
   rates: { symbol: "^TNX", name: "US 10Y yield", query: "bond yields RBI rate" },
-  china: { symbol: "000001.SS", name: "Shanghai Composite", query: "China stimulus" },
   spx: { symbol: "^GSPC", name: "S&P 500", query: "US stocks Wall Street" },
   smallcap: { symbol: "^NSEMDCP50", name: "NIFTY Midcap 50", query: "midcap smallcap stocks" },
   vix: { symbol: "^INDIAVIX", name: "India VIX", query: "India VIX" },
+  // Themes: equal-weighted baskets of the global stocks that define the theme.
+  ai_dc: { basket: ["NVDA", "VRT", "GEV", "ETN", "AVGO"], name: "US AI / data-centre stocks", query: "AI data center", overseas: true },
+  semis: { symbol: "^SOX", name: "Global semiconductors (SOX)", query: "semiconductor stocks", overseas: true },
+  china: { symbol: "000001.SS", name: "Shanghai Composite", query: "China stimulus", overseas: true },
 };
+// Overseas series trade on a different clock: an Indian move on day D can react to the US
+// session of D-1 (overnight), so their window starts one calendar day earlier.
+for (const k of ["crude", "gas", "gold", "copper", "aluminium", "steel", "sugar", "cotton", "usd", "rates", "spx"]) FACTORS[k].overseas = true;
 
 const ALWAYS = ["crude", "inr", "vix"];
 
@@ -48,7 +54,7 @@ const ALWAYS = ["crude", "inr", "vix"];
  */
 export function factorsFor(playbook) {
   const macro = playbook?.macro || {};
-  const keys = [...new Set([...Object.keys(macro), ...ALWAYS])].slice(0, 7);
+  const keys = [...new Set([...Object.keys(macro), ...ALWAYS])].slice(0, 8);
   return keys.map((k) => {
     const sens = macro[k] ?? 0;
     const why = k === "vix" ? "market fear gauge"
@@ -135,8 +141,12 @@ export function makeSeries(bars, window = 252) {
 }
 
 /** Change of a factor from prevDate's close to endDate's close, with a z-score vs its own σ. */
-export function changeBetween(series, prevDate, endDate) {
+export function changeBetween(series, prevDate, endDate, overseas = false) {
   if (!series) return null;
+  if (overseas) {
+    const d = new Date(prevDate + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() - 1);
+    prevDate = d.toISOString().slice(0, 10);
+  }
   const i0 = series.idx(prevDate), i1 = series.idx(endDate);
   if (i0 < 0 || i1 < 0 || i1 <= i0 || !(series.c[i0] > 0)) return null;
   // stale data guard: the factor must have traded near the period
