@@ -1,6 +1,6 @@
 // The app's data API: same shapes the UI renders, computed entirely in the browser.
 import { analyzeBars } from "./analysis.js";
-import { FACTORS, factorsFor, makeSeries, sectorIndexFor } from "./context.js";
+import { FACTORS, basket, factorsFor, makeSeries, sectorIndexFor } from "./context.js";
 import { BUCKETS, MACRO_TRIGGERS, TIERS, playbookFor } from "./playbooks.js";
 import * as demo from "./demo.js";
 import * as market from "./market.js";
@@ -29,7 +29,6 @@ export async function analyze({ symbol, hint = {}, mode, thresholds, years, sigm
 
   // Context series: broad market, the stock's sector index, and sector-relevant commodities / macro.
   const [benchSym, benchName] = market.benchmarkFor(hist.symbol);
-  const sectorIdx = sectorIndexFor(meta.sector, meta.industry);
   const book = playbookFor(meta.sector, meta.industry, meta.name);
   const factorDefs = factorsFor(book);
   const load = async (sym) => {
@@ -38,8 +37,24 @@ export async function analyze({ symbol, hint = {}, mode, thresholds, years, sigm
       return h.bars.length > 50 ? h.bars : null;
     } catch { return null; }
   };
-  const [bench, sectorBars, ...factorBars] = await Promise.all([
-    load(benchSym), sectorIdx ? load(sectorIdx.symbol) : null, ...factorDefs.map((f) => load(f.symbol)),
+  // Sector: a real NIFTY index where Yahoo has daily history, else an equal-weighted basket
+  // of the industry's listed leaders (excluding this stock).
+  const loadSector = async () => {
+    const idx = book.index || (book.peers ? null : sectorIndexFor(meta.sector, meta.industry));
+    if (idx) {
+      const bars = await load(idx.symbol);
+      if (bars) return [{ ...idx, query: book.newsQuery || idx.query }, bars];
+    }
+    const self = hist.symbol.replace(/\.(NS|BO)$/, "");
+    const peers = (book.peers || []).filter((p) => p.replace(/\.NS$/, "") !== self).slice(0, 5);
+    if (!peers.length) return [null, null];
+    const lists = await Promise.all(peers.map(load));
+    const used = peers.filter((_, i) => lists[i]).map((p) => p.replace(/\.NS$/, ""));
+    const bars = basket(lists);
+    return bars ? [{ symbol: null, name: `${book.name} peers`, peers: used, query: book.newsQuery }, bars] : [null, null];
+  };
+  const [bench, [sectorIdx, sectorBars], ...factorBars] = await Promise.all([
+    load(benchSym), loadSector(), ...factorDefs.map((f) => load(f.symbol)),
   ]);
   const context = {
     market: bench && { name: benchName, bars: bench },

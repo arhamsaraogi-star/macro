@@ -113,11 +113,13 @@ test("news classification", () => {
   assert.equal(r.likelyTrigger, "orders");
 });
 
-import { episodesFor, factorsFor, sectorIndexFor } from "../site/js/context.js";
+import { basket, episodesFor, factorsFor, sectorIndexFor } from "../site/js/context.js";
 import { classifyTrigger, playbookFor } from "../site/js/playbooks.js";
 
 test("sector index and factor mapping", () => {
-  assert.equal(sectorIndexFor("Consumer Cyclical", "Auto Manufacturers").symbol, "^CNXAUTO");
+  assert.equal(sectorIndexFor("Consumer Cyclical", "Auto Manufacturers"), null);
+  assert.deepEqual(playbookFor("Consumer Cyclical", "Auto Manufacturers").peers.slice(0, 2), ["MARUTI.NS", "M&M.NS"]);
+  assert.equal(playbookFor("Financial Services", "Banks - Regional").index.symbol, "^NSEBANK");
   assert.equal(sectorIndexFor("Financial Services", "Banks - Regional").symbol, "^NSEBANK");
   assert.equal(sectorIndexFor("Technology", "Information Technology Services").symbol, "^CNXIT");
   assert.equal(sectorIndexFor("", ""), null);
@@ -184,4 +186,14 @@ test("headline -> trigger bucket + tone", () => {
   const c = classifyTrigger("Sun Pharma gets USFDA warning letter, shares fall");
   assert.ok(c.buckets.includes("regulation") && c.tone === -1);
   assert.ok(classifyTrigger("Bharti Airtel announces tariff hike").buckets.includes("pricing"));
+});
+
+test("peer basket index", () => {
+  const mk = (rets) => { let c = 100; return rets.map((r, i) => ({ t: `2024-01-${String(i + 1).padStart(2, "0")}`, c: (c *= Math.exp(r)) })); };
+  const a = mk(Array(90).fill(0.01).map((x, i) => (i ? x : 0)).slice(0, 28));
+  assert.equal(basket([a]), null); // too short
+  const days = (n, r) => { let c = 100; const out = []; const d = new Date(Date.UTC(2024, 0, 1)); for (let i = 0; i < n; i++) { out.push({ t: d.toISOString().slice(0, 10), c }); c *= Math.exp(r); d.setUTCDate(d.getUTCDate() + 1); } return out; };
+  const b = basket([days(100, 0.02), days(100, 0.0)]);
+  assert.ok(b.length >= 90);
+  assert.ok(Math.abs(Math.log(b[1].c / b[0].c) - 0.01) < 1e-9); // average of 2% and 0%
 });
