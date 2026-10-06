@@ -43,33 +43,74 @@ export function info(symbol) {
   return c ? { name: c[1], sector: c[2], industry: c[3] } : { name: symbol, sector: "", industry: "" };
 }
 
-export function history(symbol) {
-  const r = rng(symbol);
-  const years = symbol.includes("SM") ? 8 : 20;
+const DAYS = (() => {
   const days = [];
   const d = new Date(Date.UTC(2026, 9, 2));
-  while (days.length < 252 * years) {
+  while (days.length < 252 * 20) {
     if (d.getUTCDay() % 6) days.push(d.toISOString().slice(0, 10));
     d.setUTCDate(d.getUTCDate() - 1);
   }
-  days.reverse();
-  const n = days.length;
-  const rets = days.map(() => r.n(0.0005, 0.017));
-  const vol = days.map(() => Math.exp(r.n(13, 0.35)));
+  return days.reverse();
+})();
+
+// Raw daily returns + volumes for one synthetic series.
+function rawReturns(symbol, vol = 0.017) {
+  const r = rng(symbol);
+  const n = DAYS.length;
+  const rets = DAYS.map(() => r.n(0.0004, vol));
+  const v = DAYS.map(() => Math.exp(r.n(13, 0.35)));
+  return { r, rets, v, n };
+}
+
+const memo = new Map();
+function marketRets() {
+  if (!memo.has("mkt")) {
+    const { rets } = rawReturns("^NSEI", 0.01);
+    DAYS.forEach((t, i) => {
+      if (t >= "2020-02-24" && t <= "2020-03-23") rets[i] = -0.025 + (i % 3 === 0 ? 0.03 : 0); // COVID crash
+      if (t >= "2008-10-01" && t <= "2008-10-31") rets[i] -= 0.012; // GFC
+      if (t === "2019-05-23" || t === "2009-05-18") rets[i] = 0.05; // election rallies
+    });
+    memo.set("mkt", rets);
+  }
+  return memo.get("mkt");
+}
+
+function toBars(rets, vols, r, start) {
+  let c = 100;
+  return DAYS.slice(start).map((t, k) => {
+    const i = k + start, o = c;
+    c *= Math.exp(rets[i]);
+    return { t, o, h: Math.max(o, c) * (1 + Math.abs(r.n(0, 0.006))), l: Math.min(o, c) * (1 - Math.abs(r.n(0, 0.006))), c, v: Math.round(vols[i]) };
+  });
+}
+
+export function history(symbol) {
+  const mkt = marketRets();
+  if (symbol === "^NSEI" || symbol === "^BSESN") {
+    const { r, v } = rawReturns(symbol);
+    return { bars: toBars(mkt, v, r, 0), meta: {} };
+  }
+  const { r, rets, v, n } = rawReturns(symbol, symbol.startsWith("^") || symbol.includes("=") ? 0.012 : 0.013);
+  if (symbol.startsWith("^") || symbol.includes("=")) {
+    // sector indices follow the market; commodities mostly don't
+    const beta = symbol.includes("=") ? 0.1 : 0.9;
+    for (let i = 0; i < n; i++) rets[i] = beta * mkt[i] + (symbol.includes("=") ? 1.2 : 0.6) * rets[i];
+    return { bars: toBars(rets, v, r, 0), meta: {} };
+  }
+  // stocks: market beta + sector + company-specific catalysts
+  const sec = history("^CNXINFRA").bars;
+  const secRets = sec.map((b, i) => (i ? Math.log(b.c / sec[i - 1].c) : 0));
+  for (let i = 0; i < n; i++) rets[i] = 0.9 * mkt[i] + 0.5 * (secRets[i] - 0.9 * mkt[i]) + rets[i];
   for (let k = 0; k < n / 180; k++) {
     const i = 80 + Math.floor(r.u() * (n - 90));
     const sign = r.u() < 0.5 ? -1 : 1;
     rets[i] = sign * (0.05 + r.u() * 0.08);
-    vol[i] *= 3 + r.u() * 4;
-    if (r.u() < 0.5) for (let j = i - 5; j < i; j++) { vol[j] *= 1.6 + r.u(); rets[j] += sign * 0.006; }
+    v[i] *= 3 + r.u() * 4;
+    if (r.u() < 0.5) for (let j = i - 5; j < i; j++) { v[j] *= 1.6 + r.u(); rets[j] += sign * 0.006; }
   }
-  let c = 100;
-  const bars = days.map((t, i) => {
-    const o = c;
-    c *= Math.exp(rets[i]);
-    return { t, o, h: Math.max(o, c) * (1 + Math.abs(r.n(0, 0.006))), l: Math.min(o, c) * (1 - Math.abs(r.n(0, 0.006))), c, v: Math.round(vol[i]) };
-  });
-  return { bars, meta: {} };
+  for (let i = 0; i < n; i++) if (Math.abs(mkt[i]) > 0.02) v[i] *= 2.5; // market panic volume
+  return { bars: toBars(rets, v, r, symbol.includes("SM") ? n - 252 * 8 : 0), meta: {} };
 }
 
 export function news(name, from, to) {
@@ -80,4 +121,16 @@ export function news(name, from, to) {
     const t = HEADLINES[Math.floor(r.u() * HEADLINES.length)].replace("{n}", name).replace("{q}", 1 + Math.floor(r.u() * 4));
     return { title: `${t} (demo)`, url: "https://news.google.com/", source: "Demo Wire", date: d };
   });
+}
+
+const CONTEXT_HEADLINES = {
+  market: ["Sensex tanks 1,800 points as global sell-off deepens", "Nifty surges to record high on strong FPI inflows", "Markets crash as COVID-19 lockdown fears grip investors"],
+  sector: ["{q}: prices jump to multi-month high", "{q} slump weighs on sector", "Sector stocks rally as {q} eases"],
+};
+export function contextNews(query, scope, from, to) {
+  const r = rng(query + from);
+  return Array.from({ length: 2 }, () => ({
+    title: CONTEXT_HEADLINES[scope][Math.floor(r.u() * 3)].replace("{q}", query) + " (demo)",
+    url: "https://news.google.com/", source: "Demo Wire", date: from, scope,
+  }));
 }

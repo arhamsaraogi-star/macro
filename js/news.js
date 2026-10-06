@@ -44,10 +44,13 @@ export const CATEGORIES = [
   ["macro", "Market-wide / macro / commodity", [
     /sensex/i, /nifty/i, /market(s)? (crash|rally|fall|surge)/i, /crude/i, /oil price/i,
     /rupee/i, /inflation/i, /rate (cut|hike)/i, /\bfed\b/i, /global/i, /steel price/i,
-    /metal prices?/i, /monsoon/i, /election/i,
+    /metal prices?/i, /monsoon/i, /election/i, /covid|corona|pandemic|lockdown/i, /\bwar\b|ukraine|russia|geopolit|israel|iran/i,
+    /recession/i, /sell-?off/i, /bloodbath/i, /dalal street/i, /\bfpi(s)? (sell|outflow)/i, /lehman|financial crisis/i,
+    /demoneti[sz]ation/i, /trump|liberation day/i, /yuan|china/i,
   ]],
 ];
 // All matching categories are kept; PRIORITY picks the "primary" one (specific beats generic).
+export const DRIVER_LABELS = { market: "Market-wide move", sector: "Sector-wide move", stock: "Stock-specific" };
 const PRIORITY = ["corporate_action", "deal", "fundraise", "orders", "sales", "guidance", "management",
   "regulatory", "results", "rating", "macro"];
 export const CATEGORY_LABELS = Object.fromEntries([...CATEGORIES.map(([k, l]) => [k, l]), ["other", "Other / general"]]);
@@ -97,6 +100,7 @@ export function newsWindow(start, end) {
 
 /** Score, dedupe and summarise raw headlines ({title,url,source,date}). */
 export function rankNews(raw, { start, sector = "", industry = "" }) {
+  // items carry scope: "company" (default), "sector" or "market"
   const preferred = new Set(playbook(sector, industry));
   const seen = new Set();
   const items = [];
@@ -109,11 +113,13 @@ export function rankNews(raw, { start, sector = "", industry = "" }) {
     if (cats.some((c) => preferred.has(c))) score += 1;
     if (cats[0] !== "other") score += 0.5;
     if (it.date) score += Math.max(0, 1 - Math.abs(Date.parse(it.date) - Date.parse(start)) / (10 * 864e5));
-    items.push({ ...it, categories: cats, primary: cats[0], score: Math.round(score * 100) / 100 });
+    items.push({ ...it, scope: it.scope || "company", categories: cats, primary: cats[0], score: Math.round(score * 100) / 100 });
   }
   items.sort((a, b) => b.score - a.score || (a.date || "").localeCompare(b.date || ""));
+  const company = items.filter((it) => it.scope === "company");
   const counts = {};
-  for (const it of items) counts[it.primary] = (counts[it.primary] || 0) + 1;
+  for (const it of company) counts[it.primary] = (counts[it.primary] || 0) + 1;
   const likely = Object.entries(counts).sort((a, b) => b[1] - a[1]).find(([k]) => k !== "other")?.[0] ?? null;
-  return { items: items.slice(0, 25), categoryCounts: counts, likelyTrigger: likely };
+  const context = items.filter((it) => it.scope !== "company").slice(0, 12);
+  return { items: [...company.slice(0, 25), ...context], categoryCounts: counts, likelyTrigger: likely };
 }
