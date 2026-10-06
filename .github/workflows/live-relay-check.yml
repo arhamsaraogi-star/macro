@@ -39,6 +39,12 @@ jobs:
           check "TD Power BSE" "https://query1.finance.yahoo.com/v8/finance/chart/TDPOWERSYS.BO?period1=0&period2=$NOW&interval=1d"
           check "NIFTY 50" "https://query1.finance.yahoo.com/v8/finance/chart/%5ENSEI?period1=0&period2=$NOW&interval=1d"
           check "SME stock" "https://query1.finance.yahoo.com/v8/finance/chart/KRISHCA-SM.NS?period1=0&period2=$NOW&interval=1d"
+          for q in "range=max" "range=10y" "range=5y" "range=2y" "period1=1609459200&period2=$NOW"; do
+            check "SME KRISHCA-SM [$q]" "https://query1.finance.yahoo.com/v8/finance/chart/KRISHCA-SM.NS?$q&interval=1d"
+          done
+          check "SME HIMALAYAN-ST [range=max]" "https://query1.finance.yahoo.com/v8/finance/chart/HIMALAYAN-ST.NS?range=max&interval=1d"
+          check "SME search" "https://query1.finance.yahoo.com/v1/finance/search?q=sme%20emerge&quotesCount=20&newsCount=0"
+          check "TD Power [range=max]" "https://query1.finance.yahoo.com/v8/finance/chart/TDPOWERSYS.NS?range=max&interval=1d"
           check "Brent" "https://query1.finance.yahoo.com/v8/finance/chart/BZ%3DF?period1=0&period2=$NOW&interval=1d"
           check "M&M (peer)" "https://query1.finance.yahoo.com/v8/finance/chart/M%26M.NS?period1=0&period2=$NOW&interval=1d"
           check "Yahoo search" "https://query1.finance.yahoo.com/v1/finance/search?q=TDPOWERSYS.NS&quotesCount=20&newsCount=0&listsCount=0&enableFuzzyQuery=true"
