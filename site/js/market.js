@@ -350,18 +350,117 @@ export async function info(symbol, hint = {}) {
 
 /* ---------- news ---------- */
 
+/* ---------- news ---------- */
+
+// Google News blocks many Cloudflare IPs ("503 Sorry"), so give it a short timeout and,
+// after a failure, stop trying it for 10 minutes. GDELT (2017+) is the main source.
+let googleRetryAt = 0;
+const googleOk = () => Date.now() >= googleRetryAt;
+function googleFailed() {
+  googleRetryAt = Date.now() + 10 * 60e3;
+}
+
 async function googleNews(query, from, to) {
   const q = `${query} after:${from} before:${to}`;
   const url = `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=en-IN&gl=IN&ceid=IN:en`;
-  const xml = await relayFetch(url, { type: "text" });
+  const xml = await relayFetch(url, { type: "text", timeout: 9000 });
   const doc = new DOMParser().parseFromString(xml, "text/xml");
-  return [...doc.querySelectorAll("item")].map((it) => {
+  const items = [...doc.querySelectorAll("item")].map((it) => {
     let title = it.querySelector("title")?.textContent || "";
     const source = it.querySelector("source")?.textContent || "";
     if (source && title.endsWith(` - ${source}`)) title = title.slice(0, -(source.length + 3));
     const pub = it.querySelector("pubDate")?.textContent;
     const d = pub ? new Date(pub) : null;
-    return { title, url: it.querySelector("link")?.textContent || "", source, date: d && !isNaN(d) ? d.toISOString().slice(0, 10) : null };
+    return { title, url: it.querySelector("link")?.textContent || "", source, date: d && !isNaN(d) ? d.toISOString().slice(0, 10) : null, via: "google" };
+  });
+  return items;
+}
+
+// GDELT allows browser requests directly (no relay) and asks for at most one request per 5 s.
+export const GDELT_START = "2017-01-01";
+let gdeltNext = 0;
+async function gdeltNews(query, from, to, attempt = 0) {
+  if (to < GDELT_START) return [];
+  const wait = gdeltNext - Date.now();
+  gdeltNext = Math.max(Date.now(), gdeltNext) + 5200;
+  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+  const dt = (d) => (d < GDELT_START ? GDELT_START : d).replaceAll("-", "") + "000000";
+  const url = `https://api.gdeltproject.org/api/v2/doc/doc?query=${encodeURIComponent(query)}&mode=ArtList&format=json&maxrecords=50&sort=DateAsc&startdatetime=${dt(from)}&enddatetime=${dt(to)}`;
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 15000);
+  let text;
+  try {
+    const res = await fetch(url, { signal: ctl.signal });
+    text = await res.text();
+    if (res.status === 429 || /limit requests/i.test(text)) throw new Error("rate");
+    if (!res.ok) throw new Error(`GDELT HTTP ${res.status}`);
+  } catch (e) {
+    if (e.message === "rate" && attempt === 0) return gdeltNews(query, from, to, 1);
+    throw new Error(e.name === "AbortError" ? "GDELT timeout" : e.message === "rate" ? "GDELT busy" : e.message);
+  } finally {
+    clearTimeout(timer);
+  }
+  let body;
+  try { body = JSON.parse(text); } catch { return []; }
+  const tidy = (t) => (t || "").replace(/\s+([,;:%?!.])/g, "$1").replace(/\s+'\s*/g, "'").replace(/\s{2,}/g, " ").trim();
+  return (body.articles || []).map((a) => ({
+    title: tidy(a.title), url: a.url, source: a.domain, via: "gdelt",
+    date: a.seendate ? `${a.seendate.slice(0, 4)}-${a.seendate.slice(4, 6)}-${a.seendate.slice(6, 8)}` : null,
+  }));
+}
+
+/** A Google News search for the same window, opened in the user's own browser (never blocked). */
+export function googleNewsLink(query, from, to) {
+  const md = (d) => { const [y, m, dd] = d.split("-"); return `${+m}/${+dd}/${y}`; };
+  return `https://www.google.com/search?q=${encodeURIComponent(query)}&tbm=nws&tbs=cdr:1,cd_min:${md(from)},cd_max:${md(to)}`;
+}
+
+async function fromSources(googleQuery, gdeltQuery, from, to, errors) {
+  const google = googleOk()
+    ? googleNews(googleQuery, from, to).catch((e) => { googleFailed(); errors.push(`Google News: ${e.message}`); return []; })
+    : null;
+  if (to < GDELT_START) return google ? await google : [];
+  const gdelt = await gdeltNews(gdeltQuery, from, to).catch((e) => { errors.push(e.message); return []; });
+  // Don't hold GDELT results hostage to a slow Google: give it at most 1.5 s more.
+  const g = google ? await Promise.race([google, new Promise((r) => setTimeout(() => r([]), 1500))]) : [];
+  return [...gdelt, ...g];
+}
+
+/** Company headlines for a move's window. */
+export function companyNews({ symbol, name, start, end }) {
+  const win = newsWindow(start, end);
+  const clean = cleanCompanyName(name || symbol);
+  const base = symbol.split(".")[0].replace(/-S[MT]$/, "");
+  const phrase = `"${clean || base}"`;
+  return cached(`nc:${symbol}:${win.from}:${win.to}`, async () => {
+    const errors = [];
+    const raw = await fromSources(phrase, `${phrase} sourcelang:english`, win.from, win.to, errors);
+    return { win, raw, errors, base, link: googleNewsLink(phrase, win.from, win.to) };
+  });
+}
+
+/** Market / sector / commodity headlines for a move's window (one combined GDELT query). */
+export function contextNews({ start, end, extra }) {
+  const win = newsWindow(start, end);
+  if (!extra.length) return Promise.resolve({ raw: [], errors: [] });
+  return cached(`nx:${win.from}:${win.to}:${extra.map((x) => x.query).join("|")}`, async () => {
+    const errors = [];
+    const terms = extra.flatMap((x) => (x.scope === "market" ? ["sensex", "nifty"] : [`"${x.query}"`]));
+    const gq = `(${[...new Set(terms)].join(" OR ")}) sourcecountry:IN sourcelang:english`;
+    let raw = [];
+    if (googleOk()) {
+      const g = await Promise.all(extra.map(({ query, scope }) => googleNews(query, win.from, win.to)
+        .then((items) => items.slice(0, 6).map((it) => ({ ...it, scope })))
+        .catch((e) => { googleFailed(); errors.push(`Google News: ${e.message}`); return []; })));
+      raw = g.flat();
+    }
+    if (!raw.length && win.to >= GDELT_START) {
+      try {
+        const items = await gdeltNews(gq, win.from, win.to);
+        raw = items.slice(0, 15).map((it) => ({ ...it, scope: /sensex|nifty|dalal|market|fpi|fii|rbi|rupee/i.test(it.title) ? "market" : "sector" }));
+      } catch (e) { errors.push(e.message); }
+    }
+    return { raw, errors };
   });
 }
 
@@ -369,46 +468,13 @@ async function googleNews(query, from, to) {
  * Headlines around a move. `extra` adds market / sector / commodity searches,
  * e.g. [{ query: "Sensex Nifty", scope: "market" }, { query: "crude oil price", scope: "sector" }].
  */
-// GDELT (2017+) allows browser requests directly; it asks for at most one request per 5 s.
-let gdeltNext = 0;
-async function gdeltNews(query, from, to) {
-  if (from < "2017-01-01") return [];
-  const wait = gdeltNext - Date.now();
-  gdeltNext = Math.max(Date.now(), gdeltNext) + 5200;
-  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-  const dt = (d) => d.replaceAll("-", "") + "000000";
-  const url = `https://api.gdeltproject.org/api/v2/doc/doc?query=${encodeURIComponent(query)}&mode=ArtList&format=json&maxrecords=40&sort=DateAsc&startdatetime=${dt(from)}&enddatetime=${dt(to)}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`GDELT HTTP ${res.status}`);
-  const text = await res.text();
-  let body;
-  try { body = JSON.parse(text); } catch { throw new Error("GDELT rate limit"); }
-  return (body.articles || []).map((a) => ({
-    title: a.title, url: a.url, source: a.domain,
-    date: a.seendate ? `${a.seendate.slice(0, 4)}-${a.seendate.slice(4, 6)}-${a.seendate.slice(6, 8)}` : null,
-  }));
-}
-
-export function news({ symbol, name, start, end, sector = "", industry = "", extra = [] }) {
-  const win = newsWindow(start, end);
-  const clean = cleanCompanyName(name || symbol);
-  const key = `n:${symbol}:${win.from}:${win.to}:${extra.map((x) => x.query).join("|")}`;
-  return cached(key, async () => {
-    const base = symbol.split(".")[0].replace(/-S[MT]$/, "");
-    const queries = [clean && `"${clean}"`, !/^\d+$/.test(base) && `"${base}" share`].filter(Boolean);
-    const raw = [], errors = [];
-    for (const q of queries) {
-      try { raw.push(...(await googleNews(q, win.from, win.to))); } catch (e) { errors.push(e.message); }
-      if (raw.length >= 8) break;
-    }
-    // Google failed or throttled: fall back to GDELT for company news.
-    if (!raw.length && queries.length) {
-      try { raw.push(...(await gdeltNews(queries[0], win.from, win.to))); } catch (e) { errors.push(e.message); }
-    }
-    const ctx = await Promise.all(extra.map(({ query, scope }) =>
-      googleNews(query, win.from, win.to).then((items) => items.slice(0, 6).map((it) => ({ ...it, scope }))).catch((e) => { errors.push(e.message); return []; })));
-    raw.push(...ctx.flat());
-    if (!raw.length && errors.length) throw new RelayError(errors[0]);
-    return { window: win, ...rankNews(raw, { start, sector, industry, name: name || symbol, ticker: base }), errors };
-  });
+export async function news({ symbol, name, start, end, sector = "", industry = "", extra = [] }) {
+  const co = await companyNews({ symbol, name, start, end });
+  const cx = await contextNews({ start, end, extra });
+  const errors = [...co.errors, ...cx.errors];
+  return {
+    window: co.win, link: co.link, errors,
+    archiveNote: co.win.to < GDELT_START ? "The free news archive (GDELT) starts in 2017 and Google News blocks the relay, so older moves may show no headlines here — use the Google News link." : "",
+    ...rankNews([...co.raw, ...cx.raw], { start, sector, industry, name: name || symbol, ticker: co.base }),
+  };
 }
