@@ -122,39 +122,75 @@ export function mentionsCompany(title, name, ticker = "") {
 }
 
 /** Score, dedupe and summarise raw headlines ({title,url,source,date}). */
-export function rankNews(raw, { start, sector = "", industry = "", name = "", ticker = "" }) {
+// NSE filing types that map straight to a trigger category.
+const FILING_TYPES = [
+  [/financial result|results? updates?/i, "results"],
+  [/raising of funds|preferential|qip|rights issue|allotment/i, "fundraise"],
+  [/change in (directors|management)|key managerial|resignation|appointment|cessation/i, "management"],
+  [/credit rating/i, "rating"],
+  [/bagging|receiving of orders|award of order|order/i, "orders"],
+  [/acquisition|amalgamation|merger|scheme of arrangement|disinvestment/i, "deal"],
+  [/bonus|split|buy ?back|dividend/i, "corporate_action"],
+];
+const LODR_BOILERPLATE = /(disclosure )?under regulation \d+[^.;]*?(sebi \(listing obligations and disclosure requirements\) regulations,? 2015)?(,? as amended)?/gi;
+
+export function rankNews(raw, { start, end = start, sector = "", industry = "", name = "", ticker = "" }) {
   // items carry scope: "filing" (exchange filing), "company" (default), "sector" or "market"
   const preferred = new Set(playbook(sector, industry));
   const seen = new Set();
   const items = [];
-  for (const it of raw) {
+  const day = (d) => Date.parse(d + "T00:00:00Z");
+  // "Fresh" = from the day before the move to the last day of the move (results often land after the close).
+  const fresh = (d) => !!d && day(d) >= day(start) - 864e5 * (new Date(start).getUTCDay() === 1 ? 3 : 1) && day(d) <= day(end);
+  for (let it of raw) {
     const key = it.title.toLowerCase().slice(0, 90);
     if (seen.has(key)) continue;
     // Search engines match names anywhere in the article; keep company headlines that name the company.
     if ((it.scope || "company") === "company" && name && !mentionsCompany(it.title, name, ticker)) continue;
     seen.add(key);
-    const text = it.scope === "filing" ? `${it.desc || ""} ${it.title}` : it.title;
-    const cats = classify(text);
-    let score = it.scope === "filing" ? 2 : 1;
+    const isFiling = it.scope === "filing";
+    const text = isFiling ? `${it.desc || ""} ${it.title.replace(LODR_BOILERPLATE, "")}` : it.title;
+    let cats = classify(text);
+    if (isFiling) {
+      const typed = FILING_TYPES.find(([re]) => re.test(it.desc || ""))?.[1];
+      if (typed) cats = [typed, ...cats.filter((c) => c !== typed && c !== "other")];
+      it = { ...it, typed: !!typed };
+    }
+    let score = isFiling ? 2 : 1;
     if (cats.some((c) => preferred.has(c))) score += 1;
     if (cats[0] !== "other") score += 0.5;
     if (it.date) score += Math.max(0, 1 - Math.abs(Date.parse(it.date) - Date.parse(start)) / (10 * 864e5));
     const trig = classifyTrigger(text);
-    items.push({ ...it, scope: it.scope || "company", categories: cats, primary: cats[0], buckets: trig.buckets, tone: trig.tone, score: Math.round(score * 100) / 100 });
+    items.push({ ...it, scope: it.scope || "company", categories: cats, primary: cats[0], buckets: trig.buckets, tone: trig.tone, fresh: fresh(it.date), score: Math.round(score * 100) / 100 });
   }
   items.sort((a, b) => b.score - a.score || (a.date || "").localeCompare(b.date || ""));
   const filings = items.filter((it) => it.scope === "filing");
   const company = items.filter((it) => it.scope === "company");
-  // Exchange filings are the company's own disclosure: they count double.
-  const counts = {};
-  for (const it of company) counts[it.primary] = (counts[it.primary] || 0) + 1;
-  for (const it of filings) if (it.primary !== "other") counts[it.primary] = (counts[it.primary] || 0) + 2;
+  // Weight: fresh typed exchange filings 3 (the company's own disclosure, right at the move), fresh
+  // headlines 1, anything older than the day before the move 0.3.
+  const counts = {}, freshCounts = {};
+  const add = (it, w) => {
+    if (it.primary === "other") return;
+    counts[it.primary] = (counts[it.primary] || 0) + w;
+    if (it.fresh) freshCounts[it.primary] = (freshCounts[it.primary] || 0) + w;
+  };
+  for (const it of company) add(it, it.fresh ? 1 : 0.3);
+  // Generic press releases / updates count like a headline; typed filings (results, management
+  // change, rating, orders…) are the strongest evidence.
+  for (const it of filings) add(it, it.fresh ? (it.typed ? 3 : 1) : 0.3);
   // Market wraps that merely mention the company ("Sensex falls; X worst performer") are "macro":
   // let specific company triggers win whenever there are any.
-  const ranked = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-  const likely = (ranked.find(([k]) => k !== "other" && k !== "macro") || ranked.find(([k]) => k !== "other"))?.[0] ?? null;
+  const pick = (c) => {
+    const ranked = Object.entries(c).sort((a, b) => b[1] - a[1]);
+    return (ranked.find(([k]) => k !== "macro") || ranked[0])?.[0] ?? null;
+  };
+  const likely = pick(counts);
   const context = items.filter((it) => it.scope === "sector" || it.scope === "market").slice(0, 12);
   const buckets = {};
   for (const it of [...filings, ...company, ...context]) for (const b of it.buckets) buckets[b] = (buckets[b] || 0) + 1;
-  return { items: [...filings.slice(0, 12), ...company.slice(0, 25), ...context], categoryCounts: counts, likelyTrigger: likely, bucketCounts: buckets };
+  return {
+    items: [...filings.slice(0, 12), ...company.slice(0, 25), ...context],
+    categoryCounts: Object.fromEntries(Object.entries(counts).map(([k, v]) => [k, Math.round(v * 10) / 10])),
+    likelyTrigger: likely, likelyFresh: !!likely && !!freshCounts[likely] && pick(freshCounts) === likely, bucketCounts: buckets,
+  };
 }

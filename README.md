@@ -86,7 +86,10 @@ tests/                       node:test unit tests
 - Yahoo has no daily history for most NIFTY sector indices, so those sectors use a basket of 3–5 listed leaders as a proxy.
 - Rates sensitivity uses the US 10-year yield (Yahoo has no Indian G-sec series). Indian rate events are covered through the episode calendar (RBI surprises) and rate headlines.
 - SME prices come from NSE's own history API through the relay. NSE prices are unadjusted, so bonuses and splits are adjusted using NSE's adjusted previous close on each ex-date.
-- News: Google News blocks many Cloudflare IPs, so the main headline source is GDELT, a free news archive the browser can query directly (2017 onwards, one request every 5 seconds). Google is tried with a short timeout and skipped for 10 minutes after a failure. Every move also has a one-click Google News link for its date window, which opens in your own browser.
+- News sources, in order:
+  1. **NSE exchange filings** for the week around each move: the company's own disclosures (results, orders, management changes, ratings, fundraises, exchange queries). Routine filings are filtered out. Typed filings from the day before through the move day weigh most. Needs relay v3.
+  2. **Google News via a Google Apps Script relay** ([`relay/google-news.gs`](relay/google-news.gs), optional). Google blocks Cloudflare from Google News but not its own servers, so this is the reliable route, including dates before 2017. Set it in Settings, `site/config.js` (`news:`) or a `?news=` link.
+  3. **GDELT** (2017+, rate-limited) as a fallback. Every move also has a one-click Google News link for its date window.
 - Google News coverage before ~2010 and for small companies is thin. The trigger classification uses keyword rules, so treat it as a lead to read the headlines, not a verdict.
 - The market-wide label is mechanical. For heavyweight index stocks (e.g. Reliance, HDFC Bank), the stock itself moves the index, so a "market-wide" label there can be partly self-caused.
 - The episode calendar is hand-curated and won't cover every event. Add to `EPISODES` in `site/js/context.js`.

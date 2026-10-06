@@ -234,3 +234,32 @@ test("NSE SME history: dedupe series and adjust for a 1:1 bonus", () => {
   const div = parseNseHistory([row("01-Jan-2024", 100, 99, 10), row("02-Jan-2024", 99, 98.5, 10)]);
   assert.equal(div[0].c, 100);
 });
+
+test("exchange filings: type mapping, boilerplate, freshness", () => {
+  const f = (desc, title, date) => ({ scope: "filing", via: "nse", desc, title: `${desc}: ${title}`, date });
+  // Yes Bank: old LODR boilerplate must not read as "regulatory"; the fresh management filing wins.
+  const y = rankNews([
+    f("Raising of Funds", "Disclosure under Regulation 30 and other applicable provisions of SEBI (Listing Obligations and Disclosure Requirements) Regulations, 2015, as amended", "2018-09-17"),
+    f("Updates", "'Re-appointment of Shri Rana Kapoor as MD & CEO, YES BANK'", "2018-09-20"),
+  ], { start: "2018-09-21", end: "2018-09-21", name: "Yes Bank" });
+  assert.equal(y.items.find((i) => i.desc === "Raising of Funds").primary, "fundraise");
+  assert.equal(y.likelyTrigger, "management");
+  assert.ok(y.likelyFresh);
+  // HDFC Bank: results filed the evening before the move are fresh.
+  const h = rankNews([f("Financial Result Updates", "submitted the financial results for the period ended December 31, 2023", "2024-01-16")],
+    { start: "2024-01-17", end: "2024-01-17", name: "HDFC Bank" });
+  assert.equal(h.likelyTrigger, "results");
+  assert.ok(h.likelyFresh);
+  // TD Power: a filing 3 days earlier is stale.
+  const t = rankNews([f("General Updates", "receipt of In-principle approval for the issue of equity shares to Promoters on a preferential basis", "2026-09-12")],
+    { start: "2026-09-15", end: "2026-09-15", name: "TD Power Systems" });
+  assert.equal(t.likelyTrigger, "fundraise");
+  assert.equal(t.likelyFresh, false);
+  // Infosys: a generic partnership press release must not outweigh the CEO-resignation headlines.
+  const i = rankNews([
+    f("Press Release", "ATP AND INFOSYS LAUNCH NEW PLAYERZONE BRINGING AN ENHANCED DIGITAL EXPERIENCE FOR PLAYERS", "2017-08-17"),
+    { title: "Vishal Sikka resigns as Infosys CEO", date: "2017-08-18" },
+    { title: "Infosys shares tank after CEO Vishal Sikka resigns", date: "2017-08-18" },
+  ], { start: "2017-08-18", end: "2017-08-18", name: "Infosys" });
+  assert.equal(i.likelyTrigger, "management");
+});

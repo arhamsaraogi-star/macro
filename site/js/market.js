@@ -528,7 +528,7 @@ export function news({ symbol, name, start, end, sector = "", industry = "", ext
         const raw = [...(await filingsTask), ...got.flat().filter(Boolean)];
         return {
           window: near, link: googleNewsLink(phrase, near.from, near.to), errors, via: "google",
-          ...rankNews(raw, { start, sector, industry, name: clean || symbol, ticker: base }),
+          ...rankNews(raw, { start, end, sector, industry, name: clean || symbol, ticker: base }),
         };
       }
     }
@@ -543,7 +543,7 @@ export function news({ symbol, name, start, end, sector = "", industry = "", ext
       const scope = mentionsCompany(it.title, clean || base, base) ? "company" : MARKET_WORDS.test(it.title) ? "market" : "sector";
       return { ...it, scope };
     });
-    const ranked = rankNews([...(await filingsTask), ...raw], { start, sector, industry, name: clean || symbol, ticker: base });
+    const ranked = rankNews([...(await filingsTask), ...raw], { start, end, sector, industry, name: clean || symbol, ticker: base });
     return {
       window: near, link: googleNewsLink(phrase, near.from, near.to), errors, via: "gdelt",
       archiveNote: near.to < GDELT_START ? "Headlines before 2017 need the Google News relay (Settings); until then use the Google News link." : "",
