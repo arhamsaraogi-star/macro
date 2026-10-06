@@ -8,6 +8,16 @@ import { CATEGORY_LABELS, cleanCompanyName, newsWindow, rankNews } from "./news.
 
 export const isDemo = demo.enabled();
 
+// Approximate index weights of heavyweights. A heavyweight's own fall drags its index down, so
+// its weight is taken out of the index move before judging "market-wide" / "sector-wide".
+const INDEX_WEIGHTS = {
+  "^NSEI": { HDFCBANK: 0.12, RELIANCE: 0.09, ICICIBANK: 0.08, INFY: 0.05, BHARTIARTL: 0.045, LT: 0.04, ITC: 0.04, TCS: 0.035, AXISBANK: 0.03, KOTAKBANK: 0.03, SBIN: 0.03, "M&M": 0.025, HINDUNILVR: 0.02, BAJFINANCE: 0.02 },
+  "^BSESN": { HDFCBANK: 0.14, RELIANCE: 0.11, ICICIBANK: 0.09, INFY: 0.06, BHARTIARTL: 0.05, LT: 0.045, ITC: 0.045, TCS: 0.04 },
+  "^NSEBANK": { HDFCBANK: 0.28, ICICIBANK: 0.25, SBIN: 0.1, KOTAKBANK: 0.09, AXISBANK: 0.09, INDUSINDBK: 0.03 },
+  "^CNXIT": { INFY: 0.27, TCS: 0.23, HCLTECH: 0.11, TECHM: 0.1, WIPRO: 0.07, LTIM: 0.06 },
+  "^CNXPHARMA": { SUNPHARMA: 0.23, CIPLA: 0.1, DRREDDY: 0.1, DIVISLAB: 0.08 },
+};
+
 export async function search(q) {
   return isDemo ? demo.search(q) : market.search(q);
 }
@@ -56,9 +66,10 @@ export async function analyze({ symbol, hint = {}, mode, thresholds, years, sigm
   const [bench, [sectorIdx, sectorBars], ...factorBars] = await Promise.all([
     load(benchSym), loadSector(), ...factorDefs.map((f) => (f.basket ? Promise.all(f.basket.map(load)).then(basket) : load(f.symbol))),
   ]);
+  const self = hist.symbol.replace(/\.(NS|BO)$/, "");
   const context = {
-    market: bench && { name: benchName, bars: bench },
-    sector: sectorBars && { name: sectorIdx.name, bars: sectorBars },
+    market: bench && { name: benchName, bars: bench, selfWeight: INDEX_WEIGHTS[benchSym]?.[self] || 0 },
+    sector: sectorBars && { name: sectorIdx.name, bars: sectorBars, selfWeight: (sectorIdx.symbol && INDEX_WEIGHTS[sectorIdx.symbol]?.[self]) || 0 },
     factors: factorDefs.map((f, i) => factorBars[i] && { ...f, bars: factorBars[i] }).filter(Boolean),
   };
 
@@ -147,15 +158,17 @@ const pctTxt = (x) => `${x > 0 ? "+" : ""}${(x * 100).toFixed(0)}%`;
  */
 export function triggerText(e, n, data) {
   const labelOf = (k) => data.categoryLabels?.[k] || k;
-  const theme = e.factors?.filter((f) => f.explains).sort((a, b) => Math.abs(b.z) - Math.abs(a.z))[0];
+  const theme = e.factors?.filter((f) => f.explains).sort((a, b) => Math.abs(b.share ?? 0) - Math.abs(a.share ?? 0))[0];
   const themeTxt = theme ? `${theme.name} ${pctTxt(theme.change)}` : "";
   const word = e.direction === "up" ? "rally" : "sell-off";
   const partial = e.alsoMoved?.length ? ` + ${e.alsoMoved.join(" & ")} ${word}` : "";
-  if (e.driver === "market") return { key: "market_wide", text: [e.episodes?.[0]?.name || "Market-wide move", themeTxt].filter(Boolean).join(" · ") };
+  const episode = e.episodes?.find((x) => x.name !== "Union Budget")?.name || e.episodes?.[0]?.name || "";
+  if (e.driver === "market") return { key: "market_wide", text: [episode || "Market-wide move", themeTxt].filter(Boolean).join(" · ") };
   if (e.driver === "sector") return { key: "sector_wide", text: [`${data.sectorIndex?.name || "Sector"} ${word}`, themeTxt].filter(Boolean).join(" · ") };
   const company = n?.likelyTrigger ? labelOf(n.likelyTrigger) : "";
-  if (!n && !theme && !partial) return null;
-  const parts = [company || themeTxt || (n ? "unclear" : "Stock-specific")];
-  if (company && themeTxt) parts.push(themeTxt);
-  return { key: n?.likelyTrigger || (theme ? "macro" : "other"), text: parts.join(" · ") + partial };
+  if (!n && !theme && !partial && !episode) return null;
+  // Company headlines first, then a matched market episode, then a macro / theme factor.
+  const head = company || episode || themeTxt || (n ? "unclear" : "Stock-specific");
+  const extra = [episode && head !== episode && company ? episode : "", themeTxt && head !== themeTxt ? themeTxt : ""].filter(Boolean);
+  return { key: n?.likelyTrigger || (episode ? "episode" : theme ? "macro" : "other"), text: [head, ...extra].join(" · ") + partial };
 }

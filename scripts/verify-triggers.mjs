@@ -34,7 +34,7 @@ for (const c of CASES) {
     if (!ev) { console.log("NO EVENT >=2% within 3 days of that date"); continue; }
     console.log(`move ${ev.end}: ${pct(ev.change)}${z(ev.zScore)} | driver=${ev.driver}${ev.alsoMoved.length ? " +" + ev.alsoMoved.join("&") : ""} | market ${pct(ev.benchmarkChange)}${z(ev.benchmarkZ)} | sector ${pct(ev.sectorChange)}${z(ev.sectorZ)}`);
     console.log(`episodes: ${ev.episodes.map((x) => x.name).join("; ") || "—"}`);
-    console.log(`factors: ${ev.factors.map((f) => `${f.name} ${pct(f.change)}${z(f.z)}${f.explains ? " [EXPLAINS]" : ""}`).join(" | ")}`);
+    console.log(`factors: ${ev.factors.map((f) => `${f.name} ${pct(f.change)}${z(f.z)} β=${f.beta ?? "?"} share=${f.share == null ? "?" : Math.round(f.share * 100) + "%"}${f.explains ? " [EXPLAINS]" : ""}`).join(" | ")}`);
     const t0 = Date.now();
     const n = await engine.news({ symbol: data.symbol, name: data.info.name, start: ev.start, end: ev.end, sector: data.info.sector, industry: data.info.industry, extra: engine.contextQueries(ev, data) });
     console.log(`news in ${((Date.now() - t0) / 1000).toFixed(1)}s, errors: ${n.errors.join(" / ") || "none"}`);
