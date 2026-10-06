@@ -1,0 +1,47 @@
+name: Live relay check
+
+# Calls the deployed relay in site/config.js the same way the website does.
+on:
+  workflow_dispatch:
+  push:
+    paths: ["site/config.js", ".github/workflows/live-relay-check.yml"]
+  schedule:
+    - cron: "41 3 * * *"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch through the deployed relay
+        run: |
+          set -e
+          RELAY=$(node -e 'globalThis.window={};eval(require("fs").readFileSync("site/config.js","utf8"));console.log(window.MACRO_CONFIG.relay.replace(/\/+$/,""))')
+          echo "relay: $RELAY"
+          curl -sS -m 20 "$RELAY/"; echo
+          NOW=$(date +%s)
+          enc() { node -e 'console.log(encodeURIComponent(process.argv[1]))' "$1"; }
+          fail=0
+          check() {
+            code=$(curl -sS -m 40 -H 'Origin: https://arhamsaraogi-star.github.io' -D /tmp/h -o /tmp/b -w '%{http_code}' "$RELAY/?url=$(enc "$2")" || echo 000)
+            acao=$(grep -i '^access-control-allow-origin' /tmp/h | tr -d '\r' || true)
+            info=$(node -e '
+              const b=require("fs").readFileSync("/tmp/b","utf8");
+              try { const j=JSON.parse(b);
+                if (j.chart) { const r=j.chart.result?.[0]; const t=r?.timestamp||[]; console.log(`${t.length} bars ${t.length?new Date(t[0]*1000).toISOString().slice(0,10):""}..${t.length?new Date(t.at(-1)*1000).toISOString().slice(0,10):""}`); }
+                else if (j.quotes) console.log(j.quotes.map(q=>q.symbol).join(" "));
+                else console.log(b.slice(0,120)); }
+              catch { const n=(b.match(/<item>/g)||[]).length; console.log(n ? `${n} news items; first: ${(b.match(/<item><title>([^<]*)/)||[])[1]||""}` : b.slice(0,160)); }')
+            echo "$1 -> HTTP $code | $acao | $info"
+            [ "$code" = 200 ] || fail=1
+          }
+          check "TD Power daily" "https://query1.finance.yahoo.com/v8/finance/chart/TDPOWERSYS.NS?period1=0&period2=$NOW&interval=1d&events=div%2Csplit&includeAdjustedClose=true"
+          check "TD Power BSE" "https://query1.finance.yahoo.com/v8/finance/chart/TDPOWERSYS.BO?period1=0&period2=$NOW&interval=1d"
+          check "NIFTY 50" "https://query1.finance.yahoo.com/v8/finance/chart/%5ENSEI?period1=0&period2=$NOW&interval=1d"
+          check "SME stock" "https://query1.finance.yahoo.com/v8/finance/chart/KRISHCA-SM.NS?period1=0&period2=$NOW&interval=1d"
+          check "Brent" "https://query1.finance.yahoo.com/v8/finance/chart/BZ%3DF?period1=0&period2=$NOW&interval=1d"
+          check "M&M (peer)" "https://query1.finance.yahoo.com/v8/finance/chart/M%26M.NS?period1=0&period2=$NOW&interval=1d"
+          check "Yahoo search" "https://query1.finance.yahoo.com/v1/finance/search?q=TDPOWERSYS.NS&quotesCount=20&newsCount=0&listsCount=0&enableFuzzyQuery=true"
+          check "Google News" "https://news.google.com/rss/search?q=%22TD%20Power%20Systems%22%20after%3A2024-01-01%20before%3A2024-03-01&hl=en-IN&gl=IN&ceid=IN:en"
+          code=$(curl -s -o /dev/null -w '%{http_code}' "$RELAY/?url=https%3A%2F%2Fexample.com%2F"); echo "blocked host -> HTTP $code (expect 403)"
+          exit $fail
