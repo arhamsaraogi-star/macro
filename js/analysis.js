@@ -107,9 +107,12 @@ export function findEvents(bars, thresholds, { context = {}, mode = "percent", s
         const c = changeBetween(f.series, prevDate, endDate);
         if (!c) return null;
         const pc = preSpan && changeBetween(f.series, ...preSpan);
+        const sens = f.sens || 0;
+        // Does this factor move explain the stock move, given the industry's sensitivity?
+        const explains = sens !== 0 && c.z != null && Math.abs(c.z) >= 1.5 && Math.sign(sens * c.change) === Math.sign(p.ret);
         return {
-          key: f.key, name: f.name, why: f.why, kind: f.kind, change: round(c.change), z: round(c.z, 2),
-          preChange: round(pc?.change), notable: c.z != null && Math.abs(c.z) >= 2,
+          key: f.key, name: f.name, why: f.why, kind: f.kind, sens, change: round(c.change), z: round(c.z, 2),
+          preChange: round(pc?.change), notable: c.z != null && Math.abs(c.z) >= 2, explains,
         };
       }).filter(Boolean);
       // Who moved it? The market, the sector, or the company itself.
@@ -128,6 +131,7 @@ export function findEvents(bars, thresholds, { context = {}, mode = "percent", s
       if (volRatioEvent != null && volRatioEvent >= 2) flags.push("event_volume_spike");
       if (mkt || sec) flags.push({ market: "market_driven", sector: "sector_driven", stock: "stock_specific" }[driver]);
       if (facts.some((f) => f.notable && f.kind === "factor")) flags.push("macro_factor");
+      if (facts.some((f) => f.explains)) flags.push("macro_explains");
       if (facts.some((f) => f.kind === "vol" && f.change >= 0.15)) flags.push("fear_spike");
       if (episodes.length) flags.push("episode");
       if (postRet != null) flags.push(postRet > 0 === up ? "follow_through" : "reversal");
@@ -215,6 +219,7 @@ export function summarize(events) {
       driversDown: driverCounts(down),
       topEpisodes: topCounts(evs.flatMap((e) => e.episodes.map((x) => x.name))),
       notableFactors: topCounts(evs.flatMap((e) => e.factors.filter((f) => f.notable && f.kind === "factor").map((f) => f.name))),
+      explainingFactors: topCounts(evs.flatMap((e) => e.factors.filter((f) => f.explains).map((f) => `${f.name} ${f.change > 0 ? "↑" : "↓"}`))),
       followThroughShare: share(evs, "follow_through"),
       avgPreChangeUp: avg(up, (e) => e.pre.change),
       avgPreChangeDown: avg(down, (e) => e.pre.change),

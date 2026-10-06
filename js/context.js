@@ -29,51 +29,39 @@ export function sectorIndexFor(sector = "", industry = "") {
 }
 
 export const FACTORS = {
-  brent: { symbol: "BZ=F", name: "Brent crude", query: "crude oil price" },
+  crude: { symbol: "BZ=F", name: "Brent crude", query: "crude oil price" },
   gas: { symbol: "NG=F", name: "Natural gas", query: "natural gas price" },
   gold: { symbol: "GC=F", name: "Gold", query: "gold price" },
-  silver: { symbol: "SI=F", name: "Silver", query: "silver price" },
   copper: { symbol: "HG=F", name: "Copper", query: "copper price" },
   aluminium: { symbol: "ALI=F", name: "Aluminium", query: "aluminium price" },
   steel: { symbol: "HRC=F", name: "Steel (HRC)", query: "steel prices" },
-  usdinr: { symbol: "INR=X", name: "USD/INR", query: "rupee dollar" },
   sugar: { symbol: "SB=F", name: "Sugar", query: "sugar prices" },
   cotton: { symbol: "CT=F", name: "Cotton", query: "cotton prices" },
+  inr: { symbol: "INR=X", name: "USD/INR", query: "rupee dollar" },
+  usd: { symbol: "DX-Y.NYB", name: "US dollar index", query: "dollar index" },
+  rates: { symbol: "^TNX", name: "US 10Y yield", query: "bond yields RBI rate" },
+  china: { symbol: "000001.SS", name: "Shanghai Composite", query: "China stimulus" },
+  spx: { symbol: "^GSPC", name: "S&P 500", query: "US stocks Wall Street" },
+  smallcap: { symbol: "^CNXSC", name: "NIFTY Smallcap", query: "smallcap stocks" },
   vix: { symbol: "^INDIAVIX", name: "India VIX", query: "India VIX" },
-  ust: { symbol: "^TNX", name: "US 10Y yield", query: "US bond yields" },
 };
 
-// industry/sector keyword -> factors, with how they usually relate to the stock
-const FACTOR_RULES = [
-  [/oil & gas e&p|exploration|oil & gas integrated/, [["brent", "revenue"], ["gas", "revenue"]]],
-  [/refin|marketing/, [["brent", "input cost / margins"]]],
-  [/gas|utilities/, [["gas", "input / pricing"], ["brent", "linked"]]],
-  [/paint|tyre|tire|chemical|airline|plastic|packaging/, [["brent", "input cost"]]],
-  [/steel/, [["steel", "realisations"], ["copper", "metal cycle"]]],
-  [/aluminum|aluminium/, [["aluminium", "realisations"], ["copper", "metal cycle"]]],
-  [/copper|metal|mining|basic materials/, [["copper", "metal cycle"], ["aluminium", "metal cycle"]]],
-  [/gold|jewel|luxury/, [["gold", "inventory / demand"]]],
-  [/silver/, [["silver", "realisations"]]],
-  [/software|information technology|it services|technology/, [["usdinr", "export earnings"], ["ust", "US demand / rates"]]],
-  [/drug|pharma|biotech/, [["usdinr", "export earnings"]]],
-  [/textile|apparel|cotton/, [["cotton", "input cost"], ["usdinr", "exports"]]],
-  [/sugar|confection|ethanol/, [["sugar", "realisations"]]],
-  [/bank|financial|insurance|credit|real estate/, [["ust", "global rates"], ["usdinr", "FPI flows"]]],
-  [/auto/, [["brent", "fuel prices / demand"], ["steel", "input cost"]]],
-  [/consumer defensive|food|household|personal/, [["brent", "packaging / freight"]]],
-];
+const ALWAYS = ["crude", "inr", "vix"];
 
-/** Macro factors to check for a company: always Brent, USD/INR and India VIX, plus sector-specific ones. */
-export function factorsFor(sector = "", industry = "") {
-  const text = `${industry} ${sector}`.toLowerCase();
-  const picked = new Map();
-  for (const [re, list] of FACTOR_RULES) {
-    if (re.test(text)) for (const [k, why] of list) if (!picked.has(k)) picked.set(k, why);
-  }
-  for (const [k, why] of [["brent", "macro / inflation"], ["usdinr", "FPI flows / rupee"], ["vix", "market fear gauge"]]) {
-    if (!picked.has(k)) picked.set(k, why);
-  }
-  return [...picked].slice(0, 6).map(([k, why]) => ({ key: k, ...FACTORS[k], why, kind: k === "vix" ? "vol" : "factor" }));
+/**
+ * Macro factors to check for a company: its industry's sensitivities (from the playbook)
+ * plus Brent, USD/INR and India VIX. `sens` = +1 if the factor rising helps the industry,
+ * -1 if it hurts, 0 if it's tracked for context only.
+ */
+export function factorsFor(playbook) {
+  const macro = playbook?.macro || {};
+  const keys = [...new Set([...Object.keys(macro), ...ALWAYS])].slice(0, 7);
+  return keys.map((k) => {
+    const sens = macro[k] ?? 0;
+    const why = k === "vix" ? "market fear gauge"
+      : sens > 0 ? `${FACTORS[k].name} ↑ = tailwind` : sens < 0 ? `${FACTORS[k].name} ↑ = headwind` : "macro context";
+    return { key: k, ...FACTORS[k], sens, why, kind: k === "vix" ? "vol" : "factor" };
+  });
 }
 
 /** Curated market-wide episodes that move Indian stocks broadly. Inclusive date ranges. */
@@ -84,6 +72,7 @@ export const EPISODES = [
   ["2009-05-18", "2009-05-18", "2009 election result rally", "politics"],
   ["2011-08-01", "2011-08-31", "US downgrade / Euro debt crisis", "market"],
   ["2013-05-22", "2013-09-04", "Taper tantrum & rupee crash", "market"],
+  ["2013-09-18", "2013-09-19", "Fed no-taper surprise", "market"],
   ["2014-05-16", "2014-05-16", "2014 election results (Modi wave)", "politics"],
   ["2014-07-01", "2016-02-11", "Crude oil price collapse", "commodity"],
   ["2015-08-11", "2015-08-24", "China yuan devaluation", "market"],
@@ -97,11 +86,17 @@ export const EPISODES = [
   ["2020-02-20", "2020-04-30", "COVID-19 crash & lockdown", "market"],
   ["2020-11-09", "2020-11-30", "COVID vaccine rally", "market"],
   ["2021-04-01", "2021-05-31", "COVID second wave", "market"],
+  ["2021-11-26", "2021-11-30", "Omicron scare", "market"],
   ["2022-02-24", "2022-03-08", "Russia–Ukraine war / commodity spike", "market"],
+  ["2020-03-27", "2020-03-27", "RBI emergency 75bp rate cut", "policy"],
+  ["2020-05-22", "2020-05-22", "RBI surprise rate cut", "policy"],
   ["2022-05-04", "2022-06-17", "RBI & Fed rate-hike shock", "market"],
+  ["2025-06-06", "2025-06-06", "RBI 50bp cut + CRR cut", "policy"],
   ["2023-01-24", "2023-02-28", "Adani–Hindenburg episode", "market"],
   ["2023-03-09", "2023-03-20", "US regional bank crisis (SVB)", "market"],
+  ["2024-06-03", "2024-06-03", "2024 exit-poll rally", "politics"],
   ["2024-06-04", "2024-06-05", "2024 election results shock", "politics"],
+  ["2024-09-24", "2024-10-08", "China stimulus rotation", "market"],
   ["2024-10-01", "2024-11-21", "Record FPI selling", "market"],
   ["2025-04-02", "2025-04-11", "US \"Liberation Day\" tariffs", "market"],
   ["2025-05-07", "2025-05-12", "India–Pakistan conflict", "market"],
