@@ -2,6 +2,10 @@ name: Verify triggers on known events
 
 on:
   workflow_dispatch:
+    inputs:
+      cases:
+        description: "Comma-separated symbols to check (empty = all)"
+        required: false
   push:
     paths: ["site/js/**", "scripts/verify-triggers.mjs", ".github/workflows/verify-triggers.yml"]
 
@@ -14,3 +18,5 @@ jobs:
         with:
           node-version: 22
       - run: node scripts/verify-triggers.mjs
+        env:
+          CASES: ${{ github.event.inputs.cases }}

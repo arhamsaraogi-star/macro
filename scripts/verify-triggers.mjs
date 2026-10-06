@@ -21,7 +21,8 @@ const CASES = [
 const pct = (x) => (x == null ? "—" : `${x > 0 ? "+" : ""}${(x * 100).toFixed(1)}%`);
 const z = (x) => (x == null ? "" : ` (${Math.abs(x).toFixed(1)}σ)`);
 
-for (const c of CASES) {
+const only = process.env.CASES ? process.env.CASES.split(",") : null;
+for (const c of CASES.filter((x) => !only || only.includes(x.symbol))) {
   console.log(`\n================ ${c.symbol} ${c.date} — truth: ${c.truth}`);
   try {
     const data = await engine.analyze({
