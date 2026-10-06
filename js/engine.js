@@ -23,7 +23,7 @@ export async function analyze({ symbol, hint = {}, mode, thresholds, years, sigm
     hist = await market.resolve(symbol, hint.symbol === symbol ? hint.alt : "", hint.symbol === symbol ? hint.board : "");
     if (!hist) throw new Error(`No price history found for '${symbol}'. Use the search box to pick the exact NSE/BSE ticker.`);
     const sameSymbol = hint.symbol?.toUpperCase() === hist.symbol;
-    meta = await market.info(hist.symbol, sameSymbol && hint.sector ? hint : { name: hist.meta.longName || hist.meta.shortName });
+    meta = await market.info(hist.symbol, sameSymbol && hint.sector ? hint : { name: (sameSymbol && hint.source === "list" && hint.name) || hist.meta.longName || hist.meta.shortName });
     meta.name = meta.name || hist.meta.longName || hist.symbol;
   }
 
@@ -129,7 +129,7 @@ export async function news({ symbol, name, start, end, sector, industry, extra =
       ...demo.news(cleanCompanyName(name), win.from, win.to),
       ...extra.flatMap((x) => demo.contextNews(x.query, x.scope, win.from, win.to)),
     ];
-    return { window: win, ...rankNews(raw, { start, sector, industry, name }), errors: [] };
+    return { window: win, link: market.googleNewsLink(`"${cleanCompanyName(name)}"`, win.from, win.to), ...rankNews(raw, { start, sector, industry, name }), errors: [] };
   }
   return market.news({ symbol, name, start, end, sector, industry, extra });
 }

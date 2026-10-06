@@ -334,3 +334,4 @@ table.matrix td { padding: 6px 8px; }
 .chain .arrow { color: var(--ink-3); text-align: center; font-size: 13px; margin: 4px 0; }
 .verdict { margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.08); font-size: 14px; }
 .bar-row small { font-size: 10.5px; }
+.news-link { display: inline-block; margin-top: 10px; font-size: 13px; padding: 7px 12px; text-decoration: none; color: var(--accent-2); }

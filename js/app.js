@@ -440,13 +440,17 @@ import * as engine from "./engine.js";
   });
 
   /* ---------- news ---------- */
-  async function loadNews(ev) {
-    if (state.news.has(ev.id)) return state.news.get(ev.id);
+  /** Company headlines first; market / sector / commodity headlines when withContext. */
+  async function loadNews(ev, withContext = true) {
+    const have = state.news.get(ev.id);
+    if (have && (have.full || !withContext)) return have;
     const info = state.data.info || {};
     const n = await engine.news({
       symbol: state.data.symbol, name: info.name || state.data.symbol, start: ev.start, end: ev.end,
-      sector: info.sector || "", industry: info.industry || "", extra: engine.contextQueries(ev, state.data),
+      sector: info.sector || "", industry: info.industry || "",
+      extra: withContext ? engine.contextQueries(ev, state.data) : [],
     });
+    n.full = withContext || !engine.contextQueries(ev, state.data).length;
     state.news.set(ev.id, n);
     return n;
   }
@@ -558,8 +562,11 @@ import * as engine from "./engine.js";
       </tbody></table>`;
   }
 
-  function newsHtml(n) {
-    if (!n.items.length) return `<p class="muted">No headlines found for ${fmtDate(n.window.from)} – ${fmtDate(n.window.to)}${n.errors?.length ? " (news source unreachable)" : ""}. Older periods and SME stocks have thinner coverage.</p>`;
+  function newsHtml(n, pending) {
+    const link = n.link ? `<a class="btn ghost news-link" href="${esc(n.link)}" target="_blank" rel="noopener">Google News for ${fmtDate(n.window.from)} – ${fmtDate(n.window.to)} ↗</a>` : "";
+    const note = n.archiveNote ? `<p class="muted" style="font-size:12.5px">${esc(n.archiveNote)}</p>` : "";
+    const more = pending ? `<p class="muted" style="font-size:12.5px"><span class="spinner"></span>Adding market &amp; sector headlines… (the free news archive allows one request every 5 seconds)</p>` : "";
+    if (!n.items.length) return `<p class="muted">No headlines found automatically for ${fmtDate(n.window.from)} – ${fmtDate(n.window.to)}.</p>${note}${more}${link}`;
     const counts = Object.entries(n.categoryCounts).sort((a, b) => b[1] - a[1]);
     const item = (it) => `<a class="news-item" href="${esc(it.url)}" target="_blank" rel="noopener">
         <div class="t">${esc(it.title)}</div>
@@ -570,7 +577,7 @@ import * as engine from "./engine.js";
       return items.length ? `<div class="news-group">${title}</div>${items.map(item).join("")}` : "";
     };
     return `<div class="row" style="margin-bottom:10px">${counts.map(([k, c]) => `<span class="chip cat">${esc(label(k))} · ${c}</span>`).join("")}</div>` +
-      group("company", "Company") + group("sector", "Sector &amp; commodities") + group("market", "Market &amp; macro");
+      group("company", "Company") + group("sector", "Sector &amp; commodities") + group("market", "Market &amp; macro") + more + note + link;
   }
 
   async function openEvent(e) {
@@ -607,13 +614,19 @@ import * as engine from "./engine.js";
       c.timeScale().setVisibleRange({ from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) });
       $("#priceChart").scrollIntoView({ behavior: "smooth", block: "center" });
     };
-    try {
-      const n = await loadNews(e);
-      if (!drawer.classList.contains("open")) return;
-      $("#newsBox").innerHTML = newsHtml(n);
+    const show = (n, pending) => {
+      if (!drawer.classList.contains("open") || drawer.dataset.ev !== e.id) return;
+      $("#newsBox").innerHTML = newsHtml(n, pending);
       $("#chainBox").innerHTML = chainHtml(e, n);
       const t = triggerOf(e);
       $("#likely").innerHTML = t ? `likely: <b style="color:var(--ink)">${esc(t.text)}</b>` : "";
+    };
+    drawer.dataset.ev = e.id;
+    try {
+      const wantsContext = engine.contextQueries(e, state.data).length > 0;
+      const first = await loadNews(e, false);
+      show(first, wantsContext && !first.full);
+      if (wantsContext && !first.full) show(await loadNews(e, true), false);
       renderTable();
     } catch (err) {
       $("#newsBox").innerHTML = `<p class="muted">Couldn't load news: ${relayHelp(err.message)}</p>`;
@@ -628,17 +641,17 @@ import * as engine from "./engine.js";
     if (!evs.length) { $("#dna").innerHTML = `<p class="muted">No ${state.frame} events to scan.</p>`; return; }
     const btn = $("#dnaBtn"); btn.disabled = true;
     let done = 0;
-    $("#dna").innerHTML = `<div class="muted">Scanning news for the ${evs.length} largest ${state.frame} moves…</div><div class="progress"><div style="width:0%"></div></div>`;
+    $("#dna").innerHTML = `<div class="muted">Scanning news for the ${evs.length} largest ${state.frame} moves… the free news archive allows one request every 5 seconds, so this takes about ${Math.ceil((evs.length * 5.2) / 60)} min.</div><div class="progress"><div style="width:0%"></div></div>`;
     const queue = [...evs];
     const worker = async () => {
       while (queue.length) {
         const e = queue.shift();
-        try { await loadNews(e); } catch { /* skip */ }
+        try { await loadNews(e, false); } catch { /* skip */ }
         done++;
         const bar = $("#dna .progress div"); if (bar) bar.style.width = `${(done / evs.length) * 100}%`;
       }
     };
-    await Promise.all([worker(), worker(), worker()]);
+    await Promise.all([worker(), worker()]);
     btn.disabled = false;
     renderDNA(evs);
     renderTable();

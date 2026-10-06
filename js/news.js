@@ -126,7 +126,8 @@ export function rankNews(raw, { start, sector = "", industry = "", name = "", ti
   for (const it of raw) {
     const key = it.title.toLowerCase().slice(0, 90);
     if (seen.has(key)) continue;
-    if ((it.scope || "company") === "company" && name && !mentionsCompany(it.title, name, ticker)) continue;
+    // GDELT matched the exact name in the article text, so only Google results need the title check.
+    if ((it.scope || "company") === "company" && it.via !== "gdelt" && name && !mentionsCompany(it.title, name, ticker)) continue;
     seen.add(key);
     const cats = classify(it.title);
     let score = 1;
