@@ -30,7 +30,21 @@ function relays() {
 
 export class RelayError extends Error {}
 
-async function relayFetch(url, { type = "json", timeout = 15000 } = {}) {
+// Free relays rate-limit bursts, so keep at most a few requests in flight.
+const MAX_IN_FLIGHT = 4;
+let inFlight = 0;
+const waiting = [];
+async function limited(fn) {
+  if (inFlight >= MAX_IN_FLIGHT) await new Promise((r) => waiting.push(r));
+  inFlight++;
+  try { return await fn(); } finally { inFlight--; waiting.shift()?.(); }
+}
+
+function relayFetch(url, opts) {
+  return limited(() => relayFetchNow(url, opts));
+}
+
+async function relayFetchNow(url, { type = "json", timeout = 15000 } = {}) {
   const errors = [];
   for (const r of relays()) {
     const ctl = new AbortController();
@@ -205,10 +219,15 @@ async function googleNews(query, from, to) {
   });
 }
 
-export function news({ symbol, name, start, end, sector = "", industry = "" }) {
+/**
+ * Headlines around a move. `extra` adds market / sector / commodity searches,
+ * e.g. [{ query: "Sensex Nifty", scope: "market" }, { query: "crude oil price", scope: "sector" }].
+ */
+export function news({ symbol, name, start, end, sector = "", industry = "", extra = [] }) {
   const win = newsWindow(start, end);
   const clean = cleanCompanyName(name || symbol);
-  return cached(`n:${symbol}:${win.from}:${win.to}`, async () => {
+  const key = `n:${symbol}:${win.from}:${win.to}:${extra.map((x) => x.query).join("|")}`;
+  return cached(key, async () => {
     const base = symbol.split(".")[0].replace(/-S[MT]$/, "");
     const queries = [clean && `"${clean}"`, !/^\d+$/.test(base) && `"${base}" share`].filter(Boolean);
     const raw = [], errors = [];
@@ -216,6 +235,9 @@ export function news({ symbol, name, start, end, sector = "", industry = "" }) {
       try { raw.push(...(await googleNews(q, win.from, win.to))); } catch (e) { errors.push(e.message); }
       if (raw.length >= 8) break;
     }
+    const ctx = await Promise.all(extra.map(({ query, scope }) =>
+      googleNews(query, win.from, win.to).then((items) => items.slice(0, 6).map((it) => ({ ...it, scope }))).catch((e) => { errors.push(e.message); return []; })));
+    raw.push(...ctx.flat());
     if (!raw.length && errors.length) throw new RelayError(errors[0]);
     return { window: win, ...rankNews(raw, { start, sector, industry }), errors };
   });

@@ -1,5 +1,6 @@
 // Big-move detection and pre-move (1 week prior) price/volume forensics.
 // Pure functions: work in the browser and in Node (tests).
+import { changeBetween, episodesFor, makeSeries } from "./context.js";
 
 export const FRAMES = ["daily", "weekly", "monthly"];
 export const PRE_DAYS = 5; // one trading week before the move
@@ -57,22 +58,18 @@ export function periods(bars, frame, sigmaYears = 1) {
   return rows.slice(1);
 }
 
-// Last close at or before `date` in a sorted bar array.
-function asof(bars, date) {
-  let lo = 0, hi = bars.length - 1, ans = null;
-  while (lo <= hi) {
-    const mid = (lo + hi) >> 1;
-    if (bars[mid].t <= date) { ans = bars[mid].c; lo = mid + 1; } else hi = mid - 1;
-  }
-  return ans;
-}
+const series = (x) => (x?.bars?.length ? { ...x, series: makeSeries(x.bars) } : null);
+const sameWay = (x, ret) => !!x && x.change > 0 === ret > 0 && Math.abs(x.change) >= Math.abs(ret) * 0.5;
 
 /**
  * Every period whose absolute move crosses the threshold.
  * mode "percent": threshold is a % move (5 -> ±5%).
  * mode "sigma":   threshold is a multiple of the trailing σ of that frame's returns.
  */
-export function findEvents(bars, thresholds, { bench = null, mode = "percent", sigmaYears = 1 } = {}) {
+export function findEvents(bars, thresholds, { context = {}, mode = "percent", sigmaYears = 1 } = {}) {
+  // context: { market: {name, bars}, sector: {name, bars} | null, factors: [{key, name, why, kind, bars}] }
+  const market = series(context.market), sector = series(context.sector);
+  const factors = (context.factors || []).map(series).filter(Boolean);
   const close = bars.map((b) => b.c);
   const vol = bars.map((b) => b.v || 0);
   const events = [];
@@ -99,11 +96,25 @@ export function findEvents(bars, thresholds, { bench = null, mode = "percent", s
       const preRange = pre.length && preLow > 0 ? Math.max(...pre.map((b) => b.h ?? b.c)) / preLow - 1 : null;
       const postRet = e + 1 < close.length ? close[Math.min(e + POST_DAYS, close.length - 1)] / close[e] - 1 : null;
 
-      let benchRet = null;
-      if (bench && bench.length) {
-        const p0 = asof(bench, bars[s >= 1 ? s - 1 : s].t), p1 = asof(bench, bars[e].t);
-        if (p0 > 0 && p1 != null) benchRet = p1 / p0 - 1;
-      }
+      const prevDate = bars[s >= 1 ? s - 1 : s].t, endDate = bars[e].t;
+      const mkt = changeBetween(market?.series, prevDate, endDate);
+      const sec = changeBetween(sector?.series, prevDate, endDate);
+      const benchRet = mkt ? mkt.change : null;
+      const preSpan = preA >= 1 ? [bars[preA - 1].t, bars[preB - 1].t] : null;
+      const mktPre = preSpan && changeBetween(market?.series, ...preSpan);
+      const secPre = preSpan && changeBetween(sector?.series, ...preSpan);
+      const facts = factors.map((f) => {
+        const c = changeBetween(f.series, prevDate, endDate);
+        if (!c) return null;
+        const pc = preSpan && changeBetween(f.series, ...preSpan);
+        return {
+          key: f.key, name: f.name, why: f.why, kind: f.kind, change: round(c.change), z: round(c.z, 2),
+          preChange: round(pc?.change), notable: c.z != null && Math.abs(c.z) >= 2,
+        };
+      }).filter(Boolean);
+      // Who moved it? The market, the sector, or the company itself.
+      const driver = sameWay(mkt, p.ret) ? "market" : sameWay(sec, p.ret) ? "sector" : "stock";
+      const episodes = episodesFor(bars[s].t, bars[e].t);
 
       const volRatioPre = baseline && preVol != null ? preVol / baseline : null;
       const volRatioEvent = baseline ? evVol / baseline : null;
@@ -115,9 +126,10 @@ export function findEvents(bars, thresholds, { bench = null, mode = "percent", s
         flags.push(preRet > 0 === up ? "pre_drift_same" : "pre_drift_opposite");
       }
       if (volRatioEvent != null && volRatioEvent >= 2) flags.push("event_volume_spike");
-      if (benchRet != null) {
-        flags.push(Math.abs(benchRet) >= Math.abs(p.ret) * 0.5 && benchRet > 0 === up ? "market_driven" : "stock_specific");
-      }
+      if (mkt || sec) flags.push({ market: "market_driven", sector: "sector_driven", stock: "stock_specific" }[driver]);
+      if (facts.some((f) => f.notable && f.kind === "factor")) flags.push("macro_factor");
+      if (facts.some((f) => f.kind === "vol" && f.change >= 0.15)) flags.push("fear_spike");
+      if (episodes.length) flags.push("episode");
       if (postRet != null) flags.push(postRet > 0 === up ? "follow_through" : "reversal");
 
       events.push({
@@ -133,6 +145,14 @@ export function findEvents(bars, thresholds, { bench = null, mode = "percent", s
         prevClose: s >= 1 ? round(close[s - 1], 2) : null,
         benchmarkChange: round(benchRet),
         relativeChange: benchRet != null ? round(p.ret - benchRet) : null,
+        benchmarkZ: round(mkt?.z, 2),
+        benchmarkPreChange: round(mktPre?.change),
+        sectorChange: round(sec?.change),
+        sectorPreChange: round(secPre?.change),
+        sectorZ: round(sec?.z, 2),
+        driver,
+        factors: facts,
+        episodes,
         pre: {
           from: preB > 0 ? bars[Math.max(preA, 0)].t : null,
           to: preB > 0 ? bars[preB - 1].t : null,
@@ -152,6 +172,17 @@ export function findEvents(bars, thresholds, { bench = null, mode = "percent", s
   }
   return events.sort((a, b) => a.end.localeCompare(b.end));
 }
+
+const driverCounts = (evs) => {
+  const c = { market: 0, sector: 0, stock: 0 };
+  for (const e of evs) c[e.driver]++;
+  return c;
+};
+const topCounts = (names, n = 8) => {
+  const c = {};
+  for (const x of names) c[x] = (c[x] || 0) + 1;
+  return Object.entries(c).sort((a, b) => b[1] - a[1]).slice(0, n).map(([name, count]) => ({ name, count }));
+};
 
 export function summarize(events) {
   const out = {};
@@ -179,6 +210,11 @@ export function summarize(events) {
       volumeBuildupShareUp: share(up, "volume_buildup"),
       volumeBuildupShareDown: share(down, "volume_buildup"),
       stockSpecificShare: share(evs, "stock_specific"),
+      drivers: driverCounts(evs),
+      driversUp: driverCounts(up),
+      driversDown: driverCounts(down),
+      topEpisodes: topCounts(evs.flatMap((e) => e.episodes.map((x) => x.name))),
+      notableFactors: topCounts(evs.flatMap((e) => e.factors.filter((f) => f.notable && f.kind === "factor").map((f) => f.name))),
       followThroughShare: share(evs, "follow_through"),
       avgPreChangeUp: avg(up, (e) => e.pre.change),
       avgPreChangeDown: avg(down, (e) => e.pre.change),
@@ -193,8 +229,8 @@ export function summarize(events) {
  * Full analysis bundle used by the UI. `years` = "max" or a number of years to show;
  * the analysis always runs on the full history so σ and volume baselines are warm.
  */
-export function analyzeBars(bars, { thresholds, bench = null, mode = "percent", years = "20", sigmaYears = 1 }) {
-  let events = findEvents(bars, thresholds, { bench, mode, sigmaYears });
+export function analyzeBars(bars, { thresholds, context = {}, mode = "percent", years = "20", sigmaYears = 1 }) {
+  let events = findEvents(bars, thresholds, { context, mode, sigmaYears });
   let view = bars;
   if (years !== "max") {
     const last = new Date(bars[bars.length - 1].t + "T00:00:00Z");

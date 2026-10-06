@@ -284,3 +284,16 @@ tbody tr:hover td { background: rgba(255,255,255,.09); }
 .dialog code { font-family: var(--mono); font-size: 12.5px; background: rgba(255,255,255,.08); padding: 1px 6px; border-radius: 6px; }
 .ctl > span { font-size: 11px; text-transform: uppercase; letter-spacing: 0.09em; color: var(--ink-3); font-weight: 600; }
 a { color: var(--accent-2); }
+.drv { font-family: Inter, sans-serif; font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 7px; white-space: nowrap; }
+.drv.market { background: rgba(94,225,255,.14); color: #8beeff; }
+.drv.sector { background: rgba(255,197,107,.15); color: var(--warn); }
+.drv.stock { background: rgba(139,155,255,.16); color: #b9c3ff; }
+.flag.ep, .chip.ep { background: rgba(255,107,139,.14); color: #ffb3c3; border-color: rgba(255,107,139,.3); }
+.flag.fx { background: rgba(94,225,255,.12); color: #8beeff; }
+.ctx-line { width: 100%; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 8px; font-size: 12.5px; color: var(--ink-3); }
+table.ctx { min-width: 0; font-size: 13px; }
+table.ctx td { font-size: 12.5px; padding: 8px 10px; }
+table.ctx td small { display: block; color: var(--ink-3); font-family: Inter, sans-serif; font-size: 11px; }
+table.ctx td b { font-family: Inter, sans-serif; font-weight: 600; }
+table.ctx tr.hot td { background: rgba(255,197,107,.1); }
+.news-group { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-3); font-weight: 600; margin: 14px 0 8px; }

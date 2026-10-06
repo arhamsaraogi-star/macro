@@ -1,15 +1,16 @@
 name: Deploy site to GitHub Pages
 
+# GitHub Pages serves the `gh-pages` branch. This workflow runs the tests and
+# publishes the `site/` folder to that branch on every push to the default branch.
+
 on:
   push:
     branches: ["**"]
-    paths: ["site/**", ".github/workflows/pages.yml"]
+    paths: ["site/**", "tests/**", ".github/workflows/pages.yml"]
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
   group: pages
@@ -27,19 +28,13 @@ jobs:
 
   deploy:
     needs: test
-    # Only the repository's default branch is published.
     if: github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/configure-pages@v5
+      - uses: peaceiris/actions-gh-pages@v4
         with:
-          enablement: true
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: site
-      - id: deployment
-        uses: actions/deploy-pages@v4
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./site
+          publish_branch: gh-pages
+          commit_message: "Deploy site"

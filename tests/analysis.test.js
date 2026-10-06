@@ -58,8 +58,9 @@ test("weekly and monthly periods and summary", () => {
 
 test("identical benchmark marks the move market-driven", () => {
   const bars = makeBars();
-  const e = findEvents(bars, { daily: 5 }, { bench: bars }).find((x) => x.end === bars[300].t);
+  const e = findEvents(bars, { daily: 5 }, { context: { market: { name: "M", bars } } }).find((x) => x.end === bars[300].t);
   assert.ok(e.flags.includes("market_driven"));
+  assert.equal(e.driver, "market");
 });
 
 test("analyzeBars clips the view but keeps the analysis warm", () => {
@@ -110,4 +111,41 @@ test("news classification", () => {
   ], { start: "2024-01-02", sector: "Industrials" });
   assert.equal(r.items.length, 2);
   assert.equal(r.likelyTrigger, "orders");
+});
+
+import { episodesFor, factorsFor, sectorIndexFor } from "../site/js/context.js";
+
+test("sector index and factor mapping", () => {
+  assert.equal(sectorIndexFor("Consumer Cyclical", "Auto Manufacturers").symbol, "^CNXAUTO");
+  assert.equal(sectorIndexFor("Financial Services", "Banks - Regional").symbol, "^NSEBANK");
+  assert.equal(sectorIndexFor("Technology", "Information Technology Services").symbol, "^CNXIT");
+  assert.equal(sectorIndexFor("", ""), null);
+  const oil = factorsFor("Energy", "Oil & Gas Refining & Marketing").map((f) => f.key);
+  assert.ok(oil.includes("brent") && oil.includes("vix"));
+  assert.ok(factorsFor("Basic Materials", "Steel").some((f) => f.key === "steel"));
+  assert.ok(factorsFor("Technology", "Software").some((f) => f.key === "usdinr"));
+});
+
+test("episodes cover the move and the week before", () => {
+  assert.ok(episodesFor("2020-03-23", "2020-03-23").some((e) => /COVID/.test(e.name)));
+  assert.ok(episodesFor("2016-11-09", "2016-11-09").some((e) => /Demonetisation/.test(e.name)));
+  assert.ok(episodesFor("2021-02-03", "2021-02-03").some((e) => e.name === "Union Budget"));
+  assert.equal(episodesFor("2017-03-15", "2017-03-15").length, 0);
+});
+
+test("sector-driven and commodity-flagged moves", () => {
+  const bars = makeBars();
+  const flat = bars.map((b) => ({ ...b, c: 100 + (b.t.charCodeAt(9) % 2) * 0.01 })); // market ~flat
+  const sector = bars; // sector index moved exactly like the stock
+  // commodity: quiet, then a 10% jump on the event day
+  const oil = bars.map((b, i) => ({ t: b.t, c: (i >= 300 ? 110 : 100) * (1 + (i % 2) * 0.002) }));
+  const e = findEvents(bars, { daily: 5 }, {
+    context: { market: { name: "M", bars: flat }, sector: { name: "S", bars: sector }, factors: [{ key: "brent", name: "Brent", why: "x", kind: "factor", bars: oil }] },
+  }).find((x) => x.end === bars[300].t);
+  assert.equal(e.driver, "sector");
+  assert.ok(e.flags.includes("sector_driven"));
+  const f = e.factors.find((x) => x.key === "brent");
+  assert.ok(f.notable && f.change > 0.09);
+  assert.ok(e.flags.includes("macro_factor"));
+  assert.ok(e.sectorChange > 0.08);
 });
