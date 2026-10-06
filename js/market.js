@@ -113,7 +113,7 @@ function loadTickerList() {
 /** Yahoo symbol for an official-list row. */
 export function yahooSymbol(row) {
   if (row.x === "NSE") return row.b === "SME" ? `${row.s}-SM.NS` : `${row.s}.NS`;
-  return `${row.s}.BO`;
+  return row.id ? `${row.id}.BO` : `${row.s}.BO`; // Yahoo BSE tickers use the scrip id (e.g. TDPOWERSYS.BO)
 }
 
 /** Rank official-list rows for a query: every word must prefix-match a word of the name/symbol. */
@@ -139,7 +139,7 @@ export function matchTickers(rows, q, limit = 12) {
 async function localSearch(q, limit) {
   const rows = await loadTickerList();
   return matchTickers(rows, q, limit).map((r) => ({
-    symbol: yahooSymbol(r), name: r.n, exchange: r.x, board: r.b,
+    symbol: yahooSymbol(r), alt: r.x === "BSE" && r.id ? `${r.s}.BO` : "", name: r.n, exchange: r.x, board: r.b,
     sector: "", industry: r.ind || "", isin: r.i || "",
     code: r.x === "BSE" ? `${r.id || ""}${r.id ? " · " : ""}${r.s}` : r.s, source: "list",
   }));
@@ -225,10 +225,11 @@ export function history(symbol) {
 }
 
 /** History for a symbol, trying NSE / BSE / SME suffixes when none was given. */
-export async function resolve(symbol) {
+export async function resolve(symbol, alt = "") {
   symbol = symbol.trim().toUpperCase();
   let cands = symbol.endsWith(".NS") || symbol.endsWith(".BO") || symbol.startsWith("^") ? [symbol] : directCandidates(symbol);
   if (symbol.endsWith("-SM.NS")) cands = [symbol, symbol.replace("-SM.NS", "-ST.NS"), symbol.replace("-SM.NS", ".NS")];
+  if (alt) cands.push(alt.toUpperCase());
   for (const c of cands.length ? cands : [symbol]) {
     const h = await history(c).catch((e) => { if (e instanceof RelayError) throw e; return { bars: [] }; });
     if (h.bars.length > 5) return { symbol: c, ...h };

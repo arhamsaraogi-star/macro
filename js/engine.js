@@ -20,7 +20,7 @@ export async function analyze({ symbol, hint = {}, mode, thresholds, years, sigm
     hist = { symbol: s, ...demo.history(s) };
     meta = demo.info(s);
   } else {
-    hist = await market.resolve(symbol);
+    hist = await market.resolve(symbol, hint.symbol === symbol ? hint.alt : "");
     if (!hist) throw new Error(`No price history found for '${symbol}'. Use the search box to pick the exact NSE/BSE ticker.`);
     const sameSymbol = hint.symbol?.toUpperCase() === hist.symbol;
     meta = await market.info(hist.symbol, sameSymbol && hint.sector ? hint : { name: hist.meta.longName || hist.meta.shortName });
